@@ -95,6 +95,7 @@ export class Hud {
       overview: document.getElementById('overview'),
       dir: document.getElementById('direction'),
       crashes: document.getElementById('crashes'),
+      nextUturn: document.getElementById('next-uturn'),
     };
     this.g = buildGauge(document.getElementById('gauge'));
     this.ctx = this.el.map.getContext('2d');
@@ -114,6 +115,9 @@ export class Hud {
       else this.ring.lineTo(t.px[k], t.pz[k]);
     }
     this.ring.closePath();
+    // U-turn openings sit on the centreline; signals at their real positions
+    this.uturnPts = t.openings.filter((o) => t.featAt[o.idx] < 0).map((o) => [t.px[o.idx], t.pz[o.idx]]);
+    this.signalPts = (t.data.signals || []).map(([, , x, z]) => [x, z]);
     this.major = new Path2D();
     this.minor = new Path2D();
     this.rail = new Path2D();
@@ -196,6 +200,15 @@ export class Hud {
     }
     this.el.nextDist.textContent = next ? (best > 950 ? (best / 1000).toFixed(1) + ' km' : Math.round(best / 10) * 10 + ' m') : '–';
     this.el.nextName.textContent = next ? next.name : '';
+    let uBest = Infinity;
+    for (const o of t.openings) {
+      if (t.featAt[o.idx] >= 0) continue;
+      const ahead = forward ? t.wrap(o.s - car.s) : t.wrap(car.s - o.s);
+      if (ahead > 10 && ahead < uBest) uBest = ahead;
+    }
+    this.el.nextUturn.textContent = car.medianOpen ? 'U-turn here' : uBest < Infinity
+      ? `U-turn in ${uBest > 950 ? (uBest / 1000).toFixed(1) + ' km' : Math.round(uBest / 10) * 10 + ' m'}` : '';
+    this.el.nextUturn.classList.toggle('here', car.medianOpen);
     this.el.lap.textContent = Math.floor(car.odometer / t.length) + 1;
     this.el.odo.textContent = (car.odometer / 1000).toFixed(1);
     if (car.crashCount !== this.lastCrashCount) {
@@ -245,6 +258,20 @@ export class Hud {
     ctx.strokeStyle = 'rgba(73,198,255,0.95)';
     ctx.lineWidth = 18 / scale * dpr * 0.35;
     ctx.stroke(this.ring);
+    const dot = (pts, r, fill, stroke) => {
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5 * dpr / scale;
+      for (const [x, z] of pts) {
+        if (Math.abs(x - pos.x) > span * 1.6 || Math.abs(z - pos.z) > span * 1.6) continue;
+        ctx.beginPath();
+        ctx.arc(x, z, r * dpr / scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    };
+    dot(this.signalPts, 2.6, '#ff5a4a', 'rgba(0,0,0,0.6)');
+    dot(this.uturnPts, 4.2, '#ffc440', 'rgba(0,0,0,0.7)');
     ctx.restore();
 
     // car marker

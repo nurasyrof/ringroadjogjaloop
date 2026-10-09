@@ -7,8 +7,10 @@ A chill, endless drive around Yogyakarta's Ring Road (Jalan Lingkar) in a 2026 R
 Any static file server works. From this folder:
 
 ```bash
-python3 -m http.server 5180
+python3 tools/serve.py 5180
 ```
+
+`tools/serve.py` is a plain static server that disables browser caching, so edits always show up on reload.
 
 Then open http://localhost:5180. Click or press any key to start the engine; browsers need a user gesture before they play audio.
 

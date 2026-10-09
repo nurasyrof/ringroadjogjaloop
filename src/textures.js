@@ -310,3 +310,43 @@ export function railBed(renderer) {
   ctx.fillRect(86, 0, 6, 64);
   return finish(c, renderer);
 }
+
+// Blue mandatory-direction disc with a U-turn arrow (turning right, as traffic keeps left).
+export function uturnSign(renderer) {
+  const [c, ctx] = canvas(256, 256);
+  ctx.fillStyle = '#f4f4f0';
+  ctx.beginPath();
+  ctx.arc(128, 128, 126, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1f55c4';
+  ctx.beginPath();
+  ctx.arc(128, 128, 114, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 22;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(88, 196);
+  ctx.lineTo(88, 110);
+  ctx.arc(128, 110, 40, Math.PI, 0);
+  ctx.lineTo(168, 150);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(140, 146);
+  ctx.lineTo(196, 146);
+  ctx.lineTo(168, 196);
+  ctx.closePath();
+  ctx.fill();
+  return finish(c, renderer, { repeat: false });
+}
+
+// Yellow/black hazard bands for median-end bollards.
+export function hazardBands(renderer) {
+  const [c, ctx] = canvas(32, 128);
+  for (let i = 0; i < 8; i++) {
+    ctx.fillStyle = i % 2 ? '#141414' : '#f2c21b';
+    ctx.fillRect(0, i * 16, 32, 16);
+  }
+  return finish(c, renderer, { repeat: false });
+}

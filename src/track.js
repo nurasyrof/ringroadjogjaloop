@@ -953,7 +953,43 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     }
   }
 
-  for (const sc of [...shops, houses, roofs, ...trunks, ...crowns, lamps, piers]) sc.build(group, chunks);
+  // U-turn openings: a blue U-turn sign facing each direction, hazard bollards on the median ends
+  const signFaceGeo = new THREE.CircleGeometry(0.45, 32);
+  signFaceGeo.rotateY(Math.PI); // face approaching traffic (-z)
+  signFaceGeo.translate(0, 2.35, -0.03);
+  const signBackGeo = new THREE.CircleGeometry(0.45, 32);
+  signBackGeo.translate(0, 2.35, 0);
+  const signPoleGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.4, 8);
+  signPoleGeo.translate(0, 1.2, 0);
+  const bollardGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.95, 12);
+  bollardGeo.translate(0, 0.475, 0);
+  const uTex = T.uturnSign(renderer);
+  const uSigns = new Scatter(signFaceGeo, new THREE.MeshStandardMaterial({ map: uTex, roughness: 0.5, emissive: 0xffffff, emissiveMap: uTex, emissiveIntensity: 0.15 }));
+  const uBacks = new Scatter(signBackGeo, mat.darkMetal);
+  const uPoles = new Scatter(signPoleGeo, mat.metal);
+  const bollards = new Scatter(bollardGeo, new THREE.MeshStandardMaterial({ map: T.hazardBands(renderer), roughness: 0.6 }));
+  for (const o of track.openings) {
+    if (track.featAt[o.idx] >= 0) continue;
+    let a = o.idx, b = o.idx;
+    while (track.gapMedian[(a - 1 + track.n) % track.n]) a--;
+    while (track.gapMedian[(b + 1) % track.n]) b++;
+    const sStart = a * track.step, sEnd = (b + 1) * track.step;
+    for (const [sn, dir] of [[sStart - 3, 1], [sEnd + 3, -1]]) {
+      track.sample(sn, fr);
+      const y = track.elevAt(sn) + 0.2;
+      const x = fr.x + fr.nx * 0.55 * dir, z = fr.z + fr.nz * 0.55 * dir;
+      const yaw = Math.atan2(fr.tx * dir, fr.tz * dir);
+      uSigns.add(x, y, z, yaw, 1, 1, 1);
+      uBacks.add(x, y, z, yaw, 1, 1, 1);
+      uPoles.add(x, y, z, yaw, 1, 1, 1);
+    }
+    for (const sn of [sStart - 0.6, sEnd + 0.6]) {
+      track.sample(sn, fr);
+      bollards.add(fr.x, track.elevAt(sn) + 0.2, fr.z, 0, 1, 1, 1);
+    }
+  }
+
+  for (const sc of [...shops, houses, roofs, ...trunks, ...crowns, lamps, piers, uSigns, uBacks, uPoles, bollards]) sc.build(group, chunks);
 
   // --- overhead direction signs before each junction, and traffic lights
   const gantryParts = [];
