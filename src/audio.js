@@ -165,6 +165,26 @@ export class EngineAudio {
     src.stop(t + dur + 0.02);
   }
 
+  // impact: low thump, crunch of carbon, and a metallic ring, scaled by impact speed
+  crash(kmh) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const k = Math.min(1, kmh / 120);
+    const thump = ctx.createOscillator();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(90, t);
+    thump.frequency.exponentialRampToValueAtTime(35, t + 0.35);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.9 * (0.5 + k), t);
+    tg.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    thump.connect(tg).connect(this.master);
+    thump.start(t);
+    thump.stop(t + 0.5);
+    this.burst(500, 0.8, 0.35 + 0.25 * k, 0.9 * (0.5 + k));
+    this.burst(2600, 4, 0.25, 0.35 * (0.4 + k));
+    this.burst(5200, 6, 0.6, 0.12 * k);
+  }
+
   update(dt, car) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime;

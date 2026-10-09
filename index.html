@@ -76,6 +76,9 @@
     #overview { width: 84px; height: 66px; display: block; border-radius: 8px; background: rgba(6,12,20,0.7); border: 1px solid var(--line); }
 
 
+    #crash-flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, rgba(255,40,40,0) 45%, rgba(255,40,40,0.55) 100%); }
+    #crash-flash.on { animation: crashflash 700ms ease-out; }
+    @keyframes crashflash { 0% { opacity: 1; } 100% { opacity: 0; } }
     #toast:empty { display: none; }
     #toast {
       position: fixed; top: 26px; left: 50%; transform: translateX(-50%);
@@ -134,7 +137,7 @@
     <div id="tag">
       <div class="tag-top"><span class="tag-lap" id="lap">1</span><span class="tag-stripe"></span><span id="road-name">Yogyakarta</span></div>
       <div class="tag-body">
-        <div><div class="tag-big"><span id="odo">0.0</span><small>KM</small></div><div class="tag-small">Driven</div></div>
+        <div><div class="tag-big"><span id="odo">0.0</span><small>KM</small></div><div class="tag-small" id="crashes">Driven</div></div>
         <div class="tag-r"><div class="tag-mid" id="next-dist">–</div><div class="tag-small" id="next-name">Next junction</div></div>
       </div>
       <div class="tag-foot"><span id="road-section">Ring Road</span><span class="chip" id="direction">CW</span><span class="chip" id="cam-mode">Chase</span><span class="chip" id="mute">Sound</span></div>
@@ -147,6 +150,7 @@
   </div>
 
   <div id="toast"></div>
+  <div id="crash-flash"></div>
 
   <div id="keys">
     <kbd>W</kbd> <kbd>↑</kbd> throttle &nbsp; <kbd>S</kbd> <kbd>↓</kbd> brake / reverse<br />

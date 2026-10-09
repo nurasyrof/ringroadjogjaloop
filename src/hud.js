@@ -94,6 +94,7 @@ export class Hud {
       toast: document.getElementById('toast'),
       overview: document.getElementById('overview'),
       dir: document.getElementById('direction'),
+      crashes: document.getElementById('crashes'),
     };
     this.g = buildGauge(document.getElementById('gauge'));
     this.ctx = this.el.map.getContext('2d');
@@ -197,6 +198,11 @@ export class Hud {
     this.el.nextName.textContent = next ? next.name : '';
     this.el.lap.textContent = Math.floor(car.odometer / t.length) + 1;
     this.el.odo.textContent = (car.odometer / 1000).toFixed(1);
+    if (car.crashCount !== this.lastCrashCount) {
+      if (this.lastCrashCount !== undefined) this.toast(`Crash · ${Math.round(car.lastCrash.kmh)} km/h impact`);
+      this.lastCrashCount = car.crashCount;
+      this.el.crashes.textContent = car.crashCount ? `${car.crashCount} crash${car.crashCount > 1 ? 'es' : ''}` : 'Driven';
+    }
     this.el.cam.textContent = camMode === 'chase' ? 'Chase' : 'Cockpit';
     this.el.dir.textContent = forward ? 'CW' : 'ACW';
 

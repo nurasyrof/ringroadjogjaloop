@@ -139,6 +139,47 @@ window.addEventListener('resize', () => {
 });
 
 // --- loop ------------------------------------------------------------------
+// --- crash sparks and carbon debris
+function particles(count, material) {
+  const pos = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) pos[i * 3 + 1] = -1000;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, material);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return { pos, vel: new Float32Array(count * 3), life: new Float32Array(count), geo, head: 0, count };
+}
+const sparks = particles(240, new THREE.PointsMaterial({ color: 0xffb347, size: 0.09, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+const debris = particles(80, new THREE.PointsMaterial({ color: 0x1c1d20, size: 0.07 }));
+// burst at a contact point: away from the wall (wx, wz), carried along the car's travel (fx, fz)
+function emit(sys, n, x, y, z, wx, wz, fx, fz, carry, power, life) {
+  for (let k = 0; k < n; k++) {
+    const i = sys.head++ % sys.count;
+    sys.pos.set([x + (Math.random() - 0.5) * 0.6, y + Math.random() * 0.3, z + (Math.random() - 0.5) * 0.6], i * 3);
+    const out = 1 + Math.random() * power, fw = carry * (0.4 + Math.random() * 0.6);
+    sys.vel.set([-wx * out + fx * fw + (Math.random() - 0.5) * power, 0.8 + Math.random() * power * 0.8, -wz * out + fz * fw + (Math.random() - 0.5) * power], i * 3);
+    sys.life[i] = life * (0.5 + Math.random());
+  }
+}
+function stepParticles(sys, dt) {
+  const { pos, vel, life } = sys;
+  for (let i = 0; i < sys.count; i++) {
+    if (life[i] <= 0) continue;
+    life[i] -= dt;
+    const j = i * 3;
+    vel[j + 1] -= 9.8 * dt;
+    pos[j] += vel[j] * dt; pos[j + 1] += vel[j + 1] * dt; pos[j + 2] += vel[j + 2] * dt;
+    const floor = track.elevAt(physics.s) + 0.02;
+    if (pos[j + 1] < floor) { pos[j + 1] = floor; vel[j + 1] *= -0.3; vel[j] *= 0.6; vel[j + 2] *= 0.6; }
+    if (life[i] <= 0) pos[j + 1] = -1000;
+  }
+  sys.geo.attributes.position.needsUpdate = true;
+}
+let shake = 0;
+let seenCrashes = 0;
+const wallFrame = {};
+
 const clock = new THREE.Clock();
 const carPos = new THREE.Vector3();
 let camYaw = null;
@@ -156,7 +197,8 @@ function frame() {
   const dt = Math.min(0.05, clock.getDelta());
   elapsed += dt;
   const steps = 4;
-  for (let i = 0; i < steps; i++) physics.update(dt / steps, input);
+  let touching = 0;
+  for (let i = 0; i < steps; i++) { physics.update(dt / steps, input); touching ||= physics.contactWall; }
 
   const yaw = physics.pose(carPos);
   carGroup.position.copy(carPos);
@@ -206,6 +248,41 @@ function frame() {
     camera.fov = 70 + Math.min(1, spd / 90) * 8;
   }
   camera.updateProjectionMatrix();
+
+  // crashes and scrapes: sparks at the contact point, debris, shake, flash, crunch
+  {
+    const f = track.sample(physics.s, wallFrame);
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const sv = Math.abs(physics.v) * Math.sign(physics.v);
+    if (physics.crashCount !== seenCrashes) {
+      seenCrashes = physics.crashCount;
+      const c = physics.lastCrash;
+      const k = Math.min(1, c.kmh / 120);
+      // side hits spark on that side; a hit on the end of a median opening sparks at the nose
+      const wx = c.wall ? f.nx * c.wall : fx, wz = c.wall ? f.nz * c.wall : fz;
+      const px = carPos.x + wx * 1.0, pz = carPos.z + wz * 1.0;
+      emit(sparks, 60 + 80 * k, px, carPos.y + 0.3, pz, wx, wz, fx, fz, sv * 0.4, 4 + 6 * k, 0.7);
+      emit(debris, 20 + 30 * k, px, carPos.y + 0.4, pz, wx, wz, fx, fz, sv * 0.3, 3 + 4 * k, 1.4);
+      shake = Math.min(1, 0.35 + c.kmh / 150);
+      audio.crash(c.kmh);
+      const fl = $('crash-flash');
+      fl.classList.remove('on');
+      void fl.offsetWidth;
+      fl.classList.add('on');
+    } else if (touching && spd > 12) {
+      const wx = f.nx * touching, wz = f.nz * touching;
+      emit(sparks, Math.min(6, 1 + spd / 15), carPos.x + wx * 0.95, carPos.y + 0.12, carPos.z + wz * 0.95, wx, wz, fx, fz, sv * 0.6, 1.5, 0.35);
+    }
+    stepParticles(sparks, dt);
+    stepParticles(debris, dt);
+    if (shake > 0.002) {
+      camera.position.x += (Math.random() - 0.5) * shake * 0.45;
+      camera.position.y += (Math.random() - 0.5) * shake * 0.3;
+      camera.position.z += (Math.random() - 0.5) * shake * 0.45;
+      camera.rotation.z += (Math.random() - 0.5) * shake * 0.05;
+      shake *= Math.exp(-dt * 5);
+    }
+  }
 
   // shadows follow the car
   sun.position.copy(carPos).addScaledVector(sunDir, 400);

@@ -155,6 +155,8 @@ const G = 9.81;
 // speed (km/h) at 12,000 rpm in each gear
 const GEAR_TOP = [82, 118, 152, 186, 220, 256, 292, 340];
 const RPM_MAX = 12000, RPM_IDLE = 4200;
+// speed into a wall (km/h) above which a hit counts as a crash rather than a scrape
+export const CRASH_KMH = 50;
 
 export class CarPhysics {
   constructor(track, info) {
@@ -165,6 +167,10 @@ export class CarPhysics {
     this.d = 6.75; // middle lane
     this.side = 1; // which carriageway: 1 = outer (clockwise), -1 = inner (anticlockwise)
     this.medianOpen = false;
+    this.crashCount = 0;
+    this.crashCooldown = 0;
+    this.crashTimer = 0;      // brief power loss after an impact
+    this.lastCrash = null;    // { kmh, wall: +1 left / -1 right of the road frame, s, d }
     this.psi = 0;
     this.v = 0;
     this.steer = 0;
@@ -247,7 +253,7 @@ export class CarPhysics {
     const dir = this.reverse ? -1 : 1;
     let a = 0;
     const P = 760000, m = 800;
-    const shiftCut = this.shiftTimer > 0 && !this.reverse ? 0.15 : 1;
+    const shiftCut = (this.shiftTimer > 0 && !this.reverse ? 0.15 : 1) * (this.crashTimer > 0 ? 0.3 : 1);
     if (this.reverse) {
       a += dir * this.throttle * (spd * 3.6 < 35 ? 5 : 0);
     } else {
@@ -274,6 +280,7 @@ export class CarPhysics {
     this.latAcc = yawRate * this.v;
 
     // integrate in track frame
+    this.prevS = this.s;
     const f = this.track.sample(this.s, this.frame);
     const denom = Math.max(0.2, 1 - f.k * this.d);
     const ds = (this.v * Math.cos(this.psi)) / denom;
@@ -282,14 +289,31 @@ export class CarPhysics {
     this.s = this.track.wrap(this.s + ds * dt);
     this.odometer += Math.abs(ds) * dt;
 
-    // soft kerbs: slide along, nobody crashes today. The central median is a wall
-    // too, except at junction openings, where you can U-turn onto the other side.
+    // Kerbs and walls. Light contact slides you along (scrape); hitting one faster than
+    // CRASH_KMH into it bounces you off and costs most of your speed. The central median
+    // is a wall too, except at its openings, where you can U-turn to the other side.
     const dMin = XS.median + this.halfWidth + 0.15;
     const dMax = XS.mainOuter - this.halfWidth - 0.15;
     this.scrape = Math.max(0, this.scrape - dt * 4);
-    this.medianOpen = this.track.gapMedian[Math.floor(this.s / this.track.step) % this.track.n] === 1;
-    if (this.medianOpen) this.side = this.d >= 0 ? 1 : -1;
-    const hit = () => {
+    this.crashCooldown = Math.max(0, this.crashCooldown - dt);
+    this.crashTimer = Math.max(0, this.crashTimer - dt);
+    const crashSpeed = CRASH_KMH / 3.6;
+    const crashed = (kmh, wall) => {
+      this.crashCount++;
+      this.crashCooldown = 0.5;
+      this.crashTimer = 0.6;
+      this.lastCrash = { kmh, wall, s: this.s, d: this.d };
+      this.scrape = 1;
+    };
+    // side wall: mirror the heading off the wall (damped) and lose speed with the angle
+    const bounceSide = (kmh, wall) => {
+      const c = Math.cos(this.psi);
+      this.v *= 0.25 + 0.35 * c * c;
+      const target = Math.abs(this.psi) > Math.PI / 2 ? Math.sign(this.psi) * Math.PI : 0;
+      this.psi = target - (this.psi - target) * 0.3;
+      crashed(kmh, wall);
+    };
+    const scrape = () => {
       const into = Math.abs(Math.sin(this.psi));
       this.v *= 1 - Math.min(0.3, into * 1.5) * dt;
       // straighten up along the kerb, whichever way we're travelling
@@ -297,11 +321,34 @@ export class CarPhysics {
       this.psi = target + (this.psi - target) * Math.max(0, 1 - 10 * dt);
       this.scrape = Math.min(1, this.scrape + into * 6 + spd * 0.004);
     };
+    this.contactWall = 0; // which wall we're touching this step: +1 left, -1 right (road frame)
+    const sideWall = (wall) => {
+      this.contactWall = wall;
+      const into = Math.abs(this.v * Math.sin(this.psi));
+      if (into > crashSpeed && this.crashCooldown <= 0) bounceSide(into * 3.6, wall);
+      else scrape();
+    };
+
+    // the end of a median opening is a wall across the road
+    const step = this.track.step, n = this.track.n;
+    const wasOpen = this.medianOpen;
+    let open = this.track.gapMedian[Math.floor(this.s / step) % n] === 1;
+    if (wasOpen && !open && Math.abs(this.d) < dMin - 0.3) {
+      this.s = this.prevS;
+      open = true;
+      const into = Math.abs(this.v * Math.cos(this.psi));
+      // nose into the kerb end: rebound backwards, or just stop if it was gentle
+      if (into > crashSpeed && this.crashCooldown <= 0) { this.v *= -0.25; crashed(into * 3.6, 0); }
+      else if (this.crashCooldown <= 0) this.v = 0;
+    }
+    this.medianOpen = open;
+    if (this.medianOpen) this.side = this.d >= 0 ? 1 : -1;
+
     const lateral = this.v * Math.sin(this.psi);
     const lo = this.side > 0 && !this.medianOpen ? dMin : -dMax;
     const hi = this.side < 0 && !this.medianOpen ? -dMin : dMax;
-    if (this.d > hi) { this.d = hi; if (lateral > 0) hit(); }
-    if (this.d < lo) { this.d = lo; if (lateral < 0) hit(); }
+    if (this.d > hi) { this.d = hi; if (lateral > 0) sideWall(1); }
+    if (this.d < lo) { this.d = lo; if (lateral < 0) sideWall(-1); }
     while (this.psi > Math.PI) this.psi -= Math.PI * 2;
     while (this.psi < -Math.PI) this.psi += Math.PI * 2;
   }
