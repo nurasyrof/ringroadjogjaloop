@@ -75,7 +75,8 @@ const trackData = await fetch('assets/track.json').then((r) => r.json());
 const track = new Track(trackData);
 setProgress(0.12, 'Building Yogyakarta…');
 await new Promise((r) => requestAnimationFrame(r));
-const world = buildWorld(track, renderer, scene);
+const buildings = await fetch('assets/buildings.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+const world = buildWorld(track, renderer, scene, buildings);
 
 setProgress(0.2, 'Rolling out the RB22…');
 const car = await loadCarModel('assets/car/scene.gltf', (p) => setProgress(0.2 + p * 0.75));

@@ -2,6 +2,8 @@ import json, math, sys, os
 # Rebuilds assets/track.json from Overpass exports (trunk.json, rr.json) in SRC.
 # Overpass queries used (bbox around Yogyakarta):
 #   way["highway"~"^(trunk|trunk_link|primary)$"](-7.88,110.30,-7.72,110.46);out geom tags;  -> trunk.json
+#   ring ways ->.r; way(around.r:45)["highway"]; node(around.r:90)["highway"="traffic_signals"]; out body geom;  -> links.json (optional)
+#   ring ways ->.r; way(around.r:320)["building"]; out tags geom;  -> b*.json (optional, split per street)
 #   way["railway"="rail"](-7.90,110.28,-7.70,110.48);out geom tags;  -> rail.json (optional)
 #   way["highway"~"trunk|primary|secondary"]["name"~"Ring Road|Lingkar",i](-7.90,110.28,-7.70,110.48);out geom tags;  -> rr.json
 SRC = sys.argv[1] if len(sys.argv) > 1 else '.'
@@ -231,6 +233,56 @@ def simp(pts,tol=6):
         if math.hypot(q[0]-out[-1][0],q[1]-out[-1][1])>tol*3: out.append(q)
     out.append(pts[-1]);return out
 oth=[{'n':nm,'h':hw,'p':[[round(x,1),round(z,1)] for x,z in simp(pts)]} for pts,nm,hw in other]
+# --- projection onto the final centreline: (sample index, signed lateral offset, +left of travel)
+pgrid={}
+for i,(x,z) in enumerate(p): pgrid.setdefault((int(x//60),int(z//60)),[]).append(i)
+def project(x,z):
+    best=(1e18,None)
+    for a in(-1,0,1):
+        for b in(-1,0,1):
+            for i in pgrid.get((int(x//60)+a,int(z//60)+b),[]):
+                dd=(p[i][0]-x)**2+(p[i][1]-z)**2
+                if dd<best[0]: best=(dd,i)
+    i=best[1]
+    if i is None: return None
+    a=p[i-1]; b=p[(i+1)%len(p)]
+    tx,tz=b[0]-a[0],b[1]-a[1]; l=math.hypot(tx,tz); tx/=l; tz/=l
+    return i,(x-p[i][0])*tz+(z-p[i][1])*(-tx)
+
+# --- median openings (U-turns / junction crossovers) and traffic signals from links.json
+openings=[];signals=[]
+_lp=os.path.join(SRC,'links.json')
+if os.path.exists(_lp):
+    L=json.load(open(_lp))['elements']
+    lways=[e for e in L if e['type']=='way']
+    ring_nodes=set()
+    for w in lways:
+        if ringsec(w): ring_nodes.update(w['nodes'])
+    for w in lways:
+        if ringsec(w) or w['tags'].get('highway') in ('footway','path','cycleway','steps','pedestrian'): continue
+        if not(w['nodes'][0] in ring_nodes and w['nodes'][-1] in ring_nodes): continue
+        g=[P(q) for q in w['geometry']]
+        Lw=sum(math.hypot(b[0]-a[0],b[1]-a[1]) for a,b in zip(g,g[1:]))
+        pa=project(*g[0]); pb=project(*g[-1])
+        if not pa or not pb or pa[1]*pb[1]>=0 or Lw>90: continue
+        kind='junction' if w['tags'].get('name') else 'uturn'
+        openings.append([(pa[0]+pb[0])//2,kind])
+    # paired one-way U-turn links sit a few metres apart: merge them into one opening
+    openings.sort()
+    merged=[]
+    for i,kind in openings:
+        if merged and i-merged[-1][0]<10:
+            if kind=='junction': merged[-1][1]='junction'
+            continue
+        merged.append([i,kind])
+    openings=merged
+    for e in L:
+        if e['type']=='node' and e['tags'].get('highway')=='traffic_signals':
+            x,z=P(e); pr=project(x,z)
+            if pr and abs(pr[1])<60: signals.append([pr[0],round(pr[1],1),round(x,1),round(z,1)])
+    signals.sort()
+print('openings',len(openings),'signals',len(signals))
+
 rails=[]
 _rp=os.path.join(SRC,'rail.json')
 if os.path.exists(_rp):
@@ -239,4 +291,4 @@ if os.path.exists(_rp):
         rails.append([[round(x,1),round(z,1)] for x,z in simp([P(q) for q in e['geometry']],2)])
 json.dump({'origin':[LAT0,LON0],'step':4,'length':round(len(p)*4,1),
   'pts':[[round(x,2),round(z,2)] for x,z in p],
-  'labels':labels,'junctions':jj,'features':features,'rails':rails,'roads':oth},open(__import__('os').path.join(__import__('os').path.dirname(__file__),'..','assets','track.json'),'w'),separators=(',',':'))
+  'labels':labels,'junctions':jj,'features':features,'rails':rails,'openings':openings,'signals':signals,'roads':oth},open(__import__('os').path.join(__import__('os').path.dirname(__file__),'..','assets','track.json'),'w'),separators=(',',':'))

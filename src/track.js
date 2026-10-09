@@ -109,8 +109,19 @@ export class Track {
         this.featAt[i] = fi;
       }
     });
-    // the median runs unbroken through grade separations (crossing traffic goes over/under)
-    this.gapMedian = this.gap.map((g, i) => (this.featAt[i] >= 0 ? 0 : g));
+    // Median openings: real U-turn links and junction crossovers from OSM when available,
+    // otherwise every crossing. The median runs unbroken through grade separations.
+    this.openings = (data.openings || []).map(([idx, kind]) => ({ idx, kind, s: idx * this.step }));
+    if (this.openings.length) {
+      this.gapMedian = new Uint8Array(n);
+      for (const o of this.openings) {
+        const w = o.kind === 'junction' ? 5 : 3;
+        for (let k = -w; k <= w; k++) this.gapMedian[(o.idx + k + n) % n] = 1;
+      }
+    } else {
+      this.gapMedian = this.gap.slice();
+    }
+    for (let i = 0; i < n; i++) if (this.featAt[i] >= 0) this.gapMedian[i] = 0;
   }
 
   elevAt(s) {
@@ -401,7 +412,136 @@ function lampGeometry() {
 
 // ---------------------------------------------------------------------------
 
-export function buildWorld(track, renderer, scene) {
+// Extrudes OSM footprints into chunked meshes: facade walls (vertex-coloured),
+// flat concrete roofs, and hipped tile roofs for houses and small shops.
+const WALLS = [
+  ['#efe9dc', '#f2e6c9', '#e9d9c8', '#f5f1ea', '#f0dcc0', '#e4e0d0', '#f3e3d6', '#dfe8e4', '#e8e1cf', '#f1e4cc'], // house
+  ['#f5f1ea', '#d8e2ec', '#e9e4d8', '#f2d7b5', '#cfd8c4', '#e3e8ee', '#f0e0c8', '#fbfaf6', '#e6d3d3'],            // shop
+  ['#c9c9c4', '#b8bcc0', '#d4d0c6', '#aeb4b8', '#c4beb2'],                                                        // industrial
+  ['#f2efe6', '#e6ead8', '#efe4cf', '#e2e6ea'],                                                                   // public
+  ['#f4f1e8', '#e9efe6', '#f1ead6'],                                                                              // religious
+];
+const ROOFS = [
+  ['#b45a35', '#a44d2c', '#8e4128', '#b8633e', '#9a5034', '#7a4a3a'],
+  ['#b45a35', '#8e4128', '#6d6f73', '#b8633e'],
+  ['#8d949a', '#9aa1a6', '#7e8489'],
+  ['#a44d2c', '#8e4128', '#6d6f73'],
+  ['#2f6e4c', '#3a7d58', '#a44d2c'],
+];
+
+function buildRealBuildings(list, mat, group, chunks, occ, OC, density) {
+  const CELL = 1200;
+  const buckets = new Map();
+  const bucket = (x, z) => {
+    const key = Math.floor(x / CELL) + ',' + Math.floor(z / CELL);
+    let b = buckets.get(key);
+    if (!b) buckets.set(key, (b = { wall: { p: [], u: [], c: [] }, flat: { p: [], u: [] }, roof: { p: [], u: [], c: [] }, cx: 0, cz: 0, n: 0 }));
+    return b;
+  };
+  const col = new THREE.Color();
+  const hash = (a, b) => {
+    let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b, 0xc2b2ae35);
+    h ^= h >>> 13;
+    return (h >>> 0) / 4294967296;
+  };
+
+  for (const b of list) {
+    const kind = b[0], h = b[1] / 10, roofType = b[2];
+    const pts = [];
+    for (let k = 3; k < b.length; k += 2) pts.push([b[k] / 10, b[k + 1] / 10]);
+    const n = pts.length;
+    // orient so the shoelace area in (x, z) is positive: outward normal of edge d is (dz, -dx)
+    let A = 0;
+    for (let i = 0; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n]; A += p[0] * q[1] - q[0] * p[1]; }
+    if (A < 0) pts.reverse();
+    let cx = 0, cz = 0, minx = Infinity, minz = Infinity, maxx = -Infinity, maxz = -Infinity;
+    for (const [x, z] of pts) {
+      cx += x; cz += z;
+      minx = Math.min(minx, x); maxx = Math.max(maxx, x); minz = Math.min(minz, z); maxz = Math.max(maxz, z);
+    }
+    cx /= n; cz /= n;
+    const r1 = hash(b[3], b[4]), r2 = hash(b[4], b[3]);
+    const wallC = col.set(WALLS[kind][(r1 * WALLS[kind].length) | 0]).toArray();
+    const roofC = col.set(ROOFS[kind][(r2 * ROOFS[kind].length) | 0]).toArray();
+    const bk = bucket(cx, cz);
+    bk.cx += cx; bk.cz += cz; bk.n++;
+
+    // occupancy for procedural scenery
+    for (let a = Math.floor(minx / OC); a <= Math.floor(maxx / OC); a++)
+      for (let c = Math.floor(minz / OC); c <= Math.floor(maxz / OC); c++) occ.add(a + ',' + c);
+    const dk = Math.floor(cx / 100) + ',' + Math.floor(cz / 100);
+    density.set(dk, (density.get(dk) || 0) + 1);
+
+    // walls
+    const W = bk.wall;
+    let along = 0;
+    const y0 = -0.05;
+    for (let i = 0; i < n; i++) {
+      const [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % n];
+      const len = Math.hypot(bx - ax, bz - az);
+      const u0 = along / 6, u1 = (along + len) / 6, v1 = h / 7;
+      // (a0, a1, b1) and (a0, b1, b0) wind outward
+      W.p.push(ax, y0, az, ax, h, az, bx, h, bz, ax, y0, az, bx, h, bz, bx, y0, bz);
+      W.u.push(u0, 0, u0, v1, u1, v1, u0, 0, u1, v1, u1, 0);
+      for (let k = 0; k < 6; k++) W.c.push(...wallC);
+      along += len;
+    }
+
+    if (roofType === 1) {
+      // hipped roof approximated as a pyramid over the footprint, with a small eave overhang
+      const area = Math.abs(A) / 2;
+      const rh = Math.min(3.4, 0.6 + 0.2 * Math.sqrt(area));
+      const R = bk.roof;
+      const e = (p) => [cx + (p[0] - cx) * 1.06, cz + (p[1] - cz) * 1.06];
+      for (let i = 0; i < n; i++) {
+        const p = e(pts[i]), q = e(pts[(i + 1) % n]);
+        // (p, apex, q) faces up and out for positive-area winding
+        R.p.push(p[0], h, p[1], cx, h + rh, cz, q[0], h, q[1]);
+        R.u.push(p[0] / 2, p[1] / 2, cx / 2, cz / 2, q[0] / 2, q[1] / 2);
+        for (let k = 0; k < 3; k++) R.c.push(...roofC);
+      }
+    } else {
+      const F = bk.flat;
+      const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));
+      const tris = THREE.ShapeUtils.triangulateShape(contour, []);
+      for (const [i0, i1, i2] of tris) {
+        const a = pts[i0], b2 = pts[i1], c = pts[i2];
+        // keep the normal pointing up
+        const up = (b2[0] - a[0]) * (c[1] - a[1]) - (b2[1] - a[1]) * (c[0] - a[0]) < 0;
+        const tri = up ? [a, b2, c] : [a, c, b2];
+        for (const [x, z] of tri) { F.p.push(x, h, z); F.u.push(x / 4, z / 4); }
+      }
+    }
+  }
+
+  const make = (data, material, colors) => {
+    if (!data.p.length) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(data.p, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(data.u, 2));
+    if (colors) g.setAttribute('color', new THREE.Float32BufferAttribute(data.c, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, material);
+    m.castShadow = m.receiveShadow = true;
+    return m;
+  };
+  const wallMat = mat.facade.clone();
+  wallMat.vertexColors = true;
+  const roofMat = mat.roof.clone();
+  roofMat.vertexColors = true;
+  roofMat.side = THREE.DoubleSide;
+  for (const bk of buckets.values()) {
+    const center = new THREE.Vector3(bk.cx / bk.n, 0, bk.cz / bk.n);
+    for (const m of [make(bk.wall, wallMat, true), make(bk.flat, mat.flatRoof, false), make(bk.roof, roofMat, true)]) {
+      if (!m) continue;
+      m.userData.center = center;
+      group.add(m);
+      chunks.push(m);
+    }
+  }
+}
+
+export function buildWorld(track, renderer, scene, buildings = null) {
   const group = new THREE.Group();
   const chunks = [];
   scene.add(group);
@@ -691,7 +831,19 @@ export function buildWorld(track, renderer, scene) {
     return false;
   };
 
-  // --- scenery
+  // --- real buildings from OSM footprints (extruded walls, flat or hipped roofs)
+  const occ = new Set();          // 8 m cells covered by a real footprint
+  const density = new Map();      // real buildings per 100 m cell
+  const OC = 8;
+  const occupied = (x, z, r = 0) => {
+    for (let a = Math.floor((x - r) / OC); a <= Math.floor((x + r) / OC); a++)
+      for (let b = Math.floor((z - r) / OC); b <= Math.floor((z + r) / OC); b++) if (occ.has(a + ',' + b)) return true;
+    return false;
+  };
+  const densityAt = (x, z) => density.get(Math.floor(x / 100) + ',' + Math.floor(z / 100)) || 0;
+  if (buildings && buildings.b) buildRealBuildings(buildings.b, mat, group, chunks, occ, OC, density);
+
+  // --- scenery (procedural fill only where OSM has no buildings)
   const rnd = rngFrom(1234);
   const archetypes = [
     [6, 7, 12], [6, 10.5, 14], [12, 7, 14], [8, 10.5, 16], [12, 14, 18],
@@ -738,7 +890,8 @@ export function buildWorld(track, renderer, scene) {
         const d = side * (W + 3 + a.d / 2 + rnd() * 1.5);
         const x = fr.x + fr.nx * d, z = fr.z + fr.nz * d;
         const idx = fr.i;
-        if (!track.gap[idx] && !nearRoad(x, z, a.d * 0.6) && !nearRing(x, z, W + 2 + a.d / 2 - 0.5)) {
+        const real = densityAt(x, z) > 2 || occupied(x, z, Math.max(a.w, a.d) / 2);
+        if (!real && !track.gap[idx] && !nearRoad(x, z, a.d * 0.6) && !nearRing(x, z, W + 2 + a.d / 2 - 0.5)) {
           const sy = 0.9 + rnd() * 0.25;
           const yaw2 = Math.atan2(fr.tx, fr.tz);
           shops[archetypes.indexOf(a)].add(x, -0.05, z, yaw2, 1, sy, 1, wallColors[(rnd() * wallColors.length) | 0]);
@@ -748,7 +901,7 @@ export function buildWorld(track, renderer, scene) {
       } else {
         const d = side * (W + 4 + rnd() * 14);
         const x = fr.x + fr.nx * d, z = fr.z + fr.nz * d;
-        if (!nearRoad(x, z, 4) && !nearRing(x, z, W + 2)) tree(x, z, 0.9 + rnd() * 0.6);
+        if (!nearRoad(x, z, 4) && !nearRing(x, z, W + 2) && !occupied(x, z, 3)) tree(x, z, 0.9 + rnd() * 0.6);
         s += 7 + rnd() * 12;
       }
       void yaw;
@@ -765,8 +918,8 @@ export function buildWorld(track, renderer, scene) {
       track.sample(s2, fr);
       const d = side * (W + 26 + rnd() * 170);
       const x = fr.x + fr.nx * d, z = fr.z + fr.nz * d;
-      if (nearRoad(x, z, 7) || nearRing(x, z, W + 20)) continue;
-      if (rnd() < 0.62) {
+      if (nearRoad(x, z, 7) || nearRing(x, z, W + 20) || occupied(x, z, 6)) continue;
+      if (rnd() < 0.62 && densityAt(x, z) === 0) {
         const yaw = Math.atan2(fr.tx, fr.tz) + (rnd() < 0.7 ? 0 : Math.PI / 2) + (rnd() - 0.5) * 0.3;
         const sx = 0.8 + rnd() * 0.5, sz = 0.8 + rnd() * 0.5;
         houses.add(x, -0.05, z, yaw, sx, 0.9 + rnd() * 0.3, sz, wallColors[(rnd() * wallColors.length) | 0]);
@@ -836,31 +989,51 @@ export function buildWorld(track, renderer, scene) {
     g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     group.add(g);
 
-    // traffic light on the separator just before the junction (always green, it's a chill drive)
-    track.sample(j.s - 26 * dir, fr);
+  }
+
+  // --- traffic signals at their OSM positions. Ring road traffic always gets green
+  // (it's a chill drive); signals facing the crossing streets show red.
+  const signalHeadMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.5 });
+  const lampOff = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.3 });
+  const lampGreen = new THREE.MeshBasicMaterial({ color: 0x5dff8a });
+  const lampRed = new THREE.MeshBasicMaterial({ color: 0xff4636 });
+  const signal = (x, z, yaw, green, arm = 5) => {
     const tl = new THREE.Group();
-    const td = (XS.mainOuter + 0.8) * dir;
-    tl.position.set(fr.x + fr.nx * td, 0, fr.z + fr.nz * td);
-    tl.rotation.y = Math.atan2(fr.tx * dir, fr.tz * dir);
+    tl.position.set(x, 0, z);
+    tl.rotation.y = yaw;
     const tp = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 6, 8), mat.darkMetal);
     tp.position.y = 3;
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(5, 0.14, 0.14), mat.darkMetal);
-    arm.position.set(-2.5, 5.9, 0);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.2, 0.36), new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.5 }));
-    head.position.set(-4.6, 5.3, 0);
-    const green = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), new THREE.MeshBasicMaterial({ color: 0x5dff8a }));
-    green.position.set(-4.6, 4.95, -0.19);
-    green.rotation.y = Math.PI;
-    const off = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.3 });
-    for (const y of [5.3, 5.65]) {
-      const l = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), off);
-      l.position.set(-4.6, y, -0.19);
+    const armM = new THREE.Mesh(new THREE.BoxGeometry(arm, 0.14, 0.14), mat.darkMetal);
+    armM.position.set(-arm / 2, 5.9, 0);
+    const hx = -arm + 0.4;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.2, 0.36), signalHeadMat);
+    head.position.set(hx, 5.3, 0);
+    // lamps top to bottom: red, amber, green; they face -z (towards approaching traffic)
+    [[5.65, green ? lampOff : lampRed], [5.3, lampOff], [4.95, green ? lampGreen : lampOff]].forEach(([y, m]) => {
+      const l = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), m);
+      l.position.set(hx, y, -0.19);
       l.rotation.y = Math.PI;
       tl.add(l);
-    }
-    tl.add(tp, arm, head, green);
+    });
+    tl.add(tp, armM, head);
     tl.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     group.add(tl);
+  };
+  for (const [idx, d, sx, sz] of track.data.signals || []) {
+    const f = track.featAt[idx] >= 0 ? track.features[track.featAt[idx]] : null;
+    if (f && Math.abs(d) < GRADE.edge + 1) continue; // over a trench or under a deck
+    track.sample(idx * track.step, fr);
+    const dir = d >= 0 ? 1 : -1;
+    if (Math.abs(d) <= 14) {
+      // stop line on a ring carriageway: pole on that carriageway's kerb, arm over the lanes
+      const pd = dir * (XS.mainOuter + 0.8);
+      signal(fr.x + fr.nx * pd, fr.z + fr.nz * pd, Math.atan2(fr.tx * dir, fr.tz * dir), true);
+    } else {
+      // crossing-street approach: traffic heads towards the ring, the head faces it
+      const ax = -fr.nx * dir, az = -fr.nz * dir;
+      const ox = fr.tx * 5 * dir, oz = fr.tz * 5 * dir; // step to the street's kerb
+      signal(sx + ox, sz + oz, Math.atan2(ax, az), false, 4);
+    }
   }
 
   // --- Merapi and Merbabu on the northern horizon
