@@ -93,7 +93,6 @@ export class Hud {
       map: document.getElementById('minimap'),
       toast: document.getElementById('toast'),
       overview: document.getElementById('overview'),
-      uturn: document.getElementById('uturn'),
       dir: document.getElementById('direction'),
     };
     this.g = buildGauge(document.getElementById('gauge'));
@@ -199,7 +198,6 @@ export class Hud {
     this.el.lap.textContent = Math.floor(car.odometer / t.length) + 1;
     this.el.odo.textContent = (car.odometer / 1000).toFixed(1);
     this.el.cam.textContent = camMode === 'chase' ? 'Chase' : 'Cockpit';
-    this.el.uturn.classList.toggle('on', car.medianOpen);
     this.el.dir.textContent = forward ? 'CW' : 'ACW';
 
     this.drawMap(pos, yaw, car);

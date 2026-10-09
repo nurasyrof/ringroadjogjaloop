@@ -22,7 +22,7 @@ Then open http://localhost:5180. Click or press any key to start the engine; bro
 | C | Toggle chase cam / cockpit cam (above the driver's head) |
 | M | Mute |
 
-At junctions the central median has openings. Slow down, move to the outer lane and steer right to U-turn onto the other carriageway; a yellow badge shows when an opening is beside you. Each direction has its own signs and traffic lights. There are no openings on flyovers or in the underpass.
+At junctions the central median has openings. Slow down, move to the outer lane and steer right to U-turn onto the other carriageway; the U-TURN pill in the speed dial lights when an opening is beside you. Each direction has its own signs and traffic lights. There are no openings on flyovers or in the underpass.
 
 ## How it's put together
 
