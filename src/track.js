@@ -527,6 +527,7 @@ function buildRealBuildings(list, mat, group, chunks, occ, OC, density) {
   };
   const wallMat = mat.facade.clone();
   wallMat.vertexColors = true;
+  mat.facades.push(wallMat);
   const roofMat = mat.roof.clone();
   roofMat.vertexColors = true;
   roofMat.side = THREE.DoubleSide;
@@ -567,7 +568,7 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     curb: new THREE.MeshStandardMaterial({ map: tex.curb, roughness: 0.8 }),
     paving: new THREE.MeshStandardMaterial({ map: tex.paving, roughness: 0.9 }),
     concrete: new THREE.MeshStandardMaterial({ map: tex.concrete, roughness: 0.9 }),
-    facade: new THREE.MeshStandardMaterial({ map: tex.facade, roughness: 0.85 }),
+    facade: new THREE.MeshStandardMaterial({ map: tex.facade, roughness: 0.85, emissive: 0xffe2b0, emissiveMap: T.facadeLights(renderer), emissiveIntensity: 0 }),
     flatRoof: new THREE.MeshStandardMaterial({ map: tex.concrete, roughness: 0.95, color: 0x9a968e }),
     roof: new THREE.MeshStandardMaterial({ map: tex.roof, roughness: 0.8 }),
     trunk: new THREE.MeshStandardMaterial({ color: 0x4a3b2c, roughness: 1 }),
@@ -576,6 +577,9 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     darkMetal: new THREE.MeshStandardMaterial({ color: 0x2c3035, roughness: 0.5, metalness: 0.6 }),
   };
   tex.asphalt.repeat.set(1, 1);
+  mat.facades = [mat.facade];      // every facade material, for lit windows at night
+  const signMats = [];             // direction and U-turn signs brighten at night
+  const lampList = [];             // median lamps: { x, y, z, nx, nz, s }
 
   // --- ground: one big plane with holes cut where underpass trenches drop below grade
   const GS = 26000;
@@ -904,7 +908,6 @@ export function buildWorld(track, renderer, scene, buildings = null) {
         if (!nearRoad(x, z, 4) && !nearRing(x, z, W + 2) && !occupied(x, z, 3)) tree(x, z, 0.9 + rnd() * 0.6);
         s += 7 + rnd() * 12;
       }
-      void yaw;
     }
 
     // separator trees (shade over the slow lane) and back-lot villages
@@ -935,6 +938,7 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     track.sample(s, fr);
     if (track.gapMedian[fr.i] || nearSlab(s, 20)) continue;
     lamps.add(fr.x, track.elev[fr.i] + 0.2, fr.z, Math.atan2(fr.tx, fr.tz), 1, 1, 1);
+    lampList.push({ x: fr.x, y: track.elev[fr.i] + 0.2, z: fr.z, nx: fr.nx, nz: fr.nz, s });
   }
 
   // flyover piers: a single column with a hammerhead cap under the median
@@ -964,7 +968,9 @@ export function buildWorld(track, renderer, scene, buildings = null) {
   const bollardGeo = new THREE.CylinderGeometry(0.11, 0.13, 0.95, 12);
   bollardGeo.translate(0, 0.475, 0);
   const uTex = T.uturnSign(renderer);
-  const uSigns = new Scatter(signFaceGeo, new THREE.MeshStandardMaterial({ map: uTex, roughness: 0.5, emissive: 0xffffff, emissiveMap: uTex, emissiveIntensity: 0.15 }));
+  const uSignMat = new THREE.MeshStandardMaterial({ map: uTex, roughness: 0.5, emissive: 0xffffff, emissiveMap: uTex, emissiveIntensity: 0.15 });
+  signMats.push(uSignMat);
+  const uSigns = new Scatter(signFaceGeo, uSignMat);
   const uBacks = new Scatter(signBackGeo, mat.darkMetal);
   const uPoles = new Scatter(signPoleGeo, mat.metal);
   const bollards = new Scatter(bollardGeo, new THREE.MeshStandardMaterial({ map: T.hazardBands(renderer), roughness: 0.6 }));
@@ -1017,6 +1023,7 @@ export function buildWorld(track, renderer, scene, buildings = null) {
       new THREE.PlaneGeometry(8.2, 2.64),
       new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.6, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.12 }),
     );
+    signMats.push(panel.material);
     panel.position.set(6.7, 6.2, -0.2);
     panel.rotation.y = Math.PI; // face oncoming (our) traffic
     const back = new THREE.Mesh(new THREE.BoxGeometry(8.3, 2.74, 0.12), mat.darkMetal);
@@ -1128,8 +1135,51 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     m.position.set(x, -40, z);
     return m;
   };
-  group.add(mountain(9000, -32000, 15000, 2900, 3, 0x6f7f92));
-  group.add(mountain(6500, -43000, 14000, 3100, 7, 0x7e8ea2));
+  const mountains = [mountain(9000, -32000, 15000, 2900, 3, 0x6f7f92), mountain(6500, -43000, 14000, 3100, 7, 0x7e8ea2)];
+  group.add(...mountains);
 
-  return { group, chunks, signals };
+  // --- night kit: glowing lamp heads, halos, and pools of sodium light on the road.
+  // Everything lives in one group that is only shown at night.
+  const nightGroup = new THREE.Group();
+  nightGroup.visible = false;
+  group.add(nightGroup);
+  const glowTex = T.glow(renderer);
+  const LAMP_COLOR = 0xffc37a;
+  {
+    const headGeo = new THREE.BoxGeometry(0.86, 0.06, 0.32);
+    const heads = new Scatter(headGeo, new THREE.MeshBasicMaterial({ color: 0xfff0d0 }), { shadow: false, receive: false });
+    const poolGeo = new THREE.CircleGeometry(15, 28);
+    poolGeo.rotateX(-Math.PI / 2);
+    const pools = new Scatter(poolGeo, new THREE.MeshBasicMaterial({
+      map: T.glow(renderer, 0.3), color: LAMP_COLOR, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
+    }), { shadow: false, receive: false });
+    const halo = [];
+    for (const l of lampList) {
+      for (const side of [-1, 1]) {
+        const hx = l.x + l.nx * 3.1 * side, hz = l.z + l.nz * 3.1 * side;
+        heads.add(hx, l.y + 9.62, hz, Math.atan2(-l.nz, l.nx), 1, 1, 1); // just under the lamp head, long side across the road
+        halo.push(hx, l.y + 9.55, hz);
+        pools.add(l.x + l.nx * 6.7 * side, l.y - 0.16, l.z + l.nz * 6.7 * side, 0, 1, 1, 1);
+      }
+    }
+    heads.build(nightGroup, chunks);
+    pools.build(nightGroup, chunks);
+    const hg = new THREE.BufferGeometry();
+    hg.setAttribute('position', new THREE.Float32BufferAttribute(halo, 3));
+    const halos = new THREE.Points(hg, new THREE.PointsMaterial({
+      map: glowTex, color: LAMP_COLOR, size: 4.2, sizeAttenuation: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    halos.frustumCulled = false;
+    nightGroup.add(halos);
+  }
+  const mountainDay = mountains.map((m) => m.material.color.getHex());
+  const setNight = (on) => {
+    nightGroup.visible = on;
+    for (const m of mat.facades) m.emissiveIntensity = on ? 1.25 : 0;
+    for (const m of signMats) m.emissiveIntensity = on ? 0.85 : 0.14;
+    mountains.forEach((m, i) => m.material.color.setHex(on ? 0x0b1019 : mountainDay[i]));
+  };
+
+  return { group, chunks, signals, setNight, lamps: lampList, glowTex };
 }

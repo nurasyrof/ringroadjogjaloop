@@ -130,6 +130,31 @@ export class Traffic {
       }
     }
     for (const type in this.meshes) this.meshes[type].body.instanceColor.needsUpdate = true;
+    // night: head/tail-light halos (4 points per vehicle) and a pool of light ahead of each
+    const n = this.vehicles.length;
+    this.lightPos = new Float32Array(n * 4 * 3);
+    const lc = new Float32Array(n * 4 * 3);
+    for (let i = 0; i < n; i++) {
+      lc.set([1, 0.95, 0.8, 1, 0.95, 0.8, 1, 0.08, 0.05, 1, 0.08, 0.05], i * 12);
+    }
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(this.lightPos, 3));
+    lg.setAttribute('color', new THREE.BufferAttribute(lc, 3));
+    this.lightPts = new THREE.Points(lg, new THREE.PointsMaterial({
+      size: 1.5, sizeAttenuation: true, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.lightPts.frustumCulled = false;
+    this.lightPts.visible = false;
+    const beamGeo = new THREE.PlaneGeometry(5, 16).rotateX(-Math.PI / 2).translate(0, 0, 8);
+    this.beams = new THREE.InstancedMesh(beamGeo, new THREE.MeshBasicMaterial({
+      color: 0xfff1cf, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false,
+      polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -8,
+    }), n);
+    this.beams.frustumCulled = false;
+    this.beams.visible = false;
+    scene.add(this.lightPts, this.beams);
+    this.night = false;
+
     // openings usable for U-turns
     this.openings = track.openings.filter((o) => track.featAt[o.idx] < 0);
     this.seeded = false;
@@ -139,6 +164,16 @@ export class Traffic {
     this._p = new THREE.Vector3();
     this._one = new THREE.Vector3(1, 1, 1);
     this._f = {};
+  }
+
+  setNight(on, glowTex) {
+    this.night = on;
+    this.lightPts.visible = this.beams.visible = on;
+    if (glowTex && !this.lightPts.material.map) {
+      this.lightPts.material.map = glowTex;
+      this.beams.material.map = glowTex;
+      this.lightPts.material.needsUpdate = this.beams.material.needsUpdate = true;
+    }
   }
 
   // signed distance from a to b along the loop, in (-L/2, L/2]
@@ -368,6 +403,7 @@ export class Traffic {
 
   render() {
     const t = this.track, f = this._f;
+    this._vi = 0;
     for (const v of this.vehicles) {
       t.sample(v.s, f);
       const main = Math.abs(v.d) <= XS.mainOuter;
@@ -383,6 +419,23 @@ export class Traffic {
       const mesh = this.meshes[v.type];
       mesh.body.setMatrixAt(v.slot, this._m);
       mesh.trim.setMatrixAt(v.slot, this._m);
+      if (this.night) {
+        const i = this._vi++;
+        // lamps sit at the corners: right vector is (dz, -dx)
+        const hw = v.type === 'bike' ? 0.05 : v.wid * 0.36, hl = v.len / 2, ly = y + (v.type === 'bike' ? 0.9 : 0.8);
+        const px = this._p.x, pz = this._p.z, rx = dz * hw, rz = -dx * hw;
+        this.lightPos.set([
+          px + dx * hl + rx, ly, pz + dz * hl + rz, px + dx * hl - rx, ly, pz + dz * hl - rz,
+          px - dx * hl + rx, ly, pz - dz * hl + rz, px - dx * hl - rx, ly, pz - dz * hl - rz,
+        ], i * 12);
+        this._p.x += dx * hl; this._p.z += dz * hl; this._p.y += 0.05;
+        this._m.compose(this._p, this._q, this._one);
+        this.beams.setMatrixAt(i, this._m);
+      }
+    }
+    if (this.night) {
+      this.lightPts.geometry.attributes.position.needsUpdate = true;
+      this.beams.instanceMatrix.needsUpdate = true;
     }
     for (const k in this.meshes) {
       this.meshes[k].body.instanceMatrix.needsUpdate = true;

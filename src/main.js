@@ -41,6 +41,7 @@ su.sunPosition.value.copy(sunDir);
 scene.add(sky);
 
 // image-based lighting from the same sky
+const env = { day: null, night: null };
 {
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new THREE.Scene();
@@ -56,6 +57,20 @@ scene.add(sky);
   envScene.add(g);
   scene.environment = pmrem.fromScene(envScene, 0, 0.1, 2000).texture;
   scene.environmentIntensity = 0.7;
+  env.day = scene.environment;
+  // night reflections: dark sky, a band of warm city glow near the horizon, a few lamp-like spots
+  const nightScene = new THREE.Scene();
+  nightScene.add(new THREE.Mesh(new THREE.SphereGeometry(500, 24, 12), new THREE.MeshBasicMaterial({ color: 0x05070c, side: THREE.BackSide })));
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(480, 480, 60, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0x2a2018, side: THREE.BackSide }));
+  band.position.y = 20;
+  nightScene.add(band);
+  for (let i = 0; i < 10; i++) {
+    const spot = new THREE.Mesh(new THREE.SphereGeometry(14, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffc37a }));
+    const a = (i / 10) * Math.PI * 2;
+    spot.position.set(Math.cos(a) * 300, 90 + (i % 3) * 30, Math.sin(a) * 300);
+    nightScene.add(spot);
+  }
+  env.night = pmrem.fromScene(nightScene, 0, 0.1, 2000).texture;
 }
 
 scene.fog = new THREE.FogExp2(0xcdbfa8, 0.00028);
@@ -68,7 +83,35 @@ sc.left = -80; sc.right = 80; sc.top = 80; sc.bottom = -80; sc.near = 1; sc.far 
 sun.shadow.bias = -0.0003;
 sun.shadow.normalBias = 0.35;
 scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xc4d6ff, 0x6a5a40, 0.75));
+const hemi = new THREE.HemisphereLight(0xc4d6ff, 0x6a5a40, 0.75);
+scene.add(hemi);
+
+// night sky: dark dome with a faint city glow at the horizon, plus stars
+const nightSky = new THREE.Mesh(new THREE.SphereGeometry(42000, 32, 16), new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+{
+  const p = nightSky.geometry.attributes.position, c = new Float32Array(p.count * 3);
+  const top = new THREE.Color(0x04060b), mid = new THREE.Color(0x0d1220), glow = new THREE.Color(0x3a2a22), col = new THREE.Color();
+  for (let i = 0; i < p.count; i++) {
+    const h = Math.max(0, p.getY(i) / 42000);
+    if (h < 0.12) col.copy(glow).lerp(mid, h / 0.12); else col.copy(mid).lerp(top, Math.min(1, (h - 0.12) / 0.5));
+    c.set([col.r, col.g, col.b], i * 3);
+  }
+  nightSky.geometry.setAttribute('color', new THREE.BufferAttribute(c, 3));
+}
+const stars = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xdfe8ff, size: 1.6, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.85, depthWrite: false }));
+{
+  const sp = [];
+  for (let i = 0; i < 1400; i++) {
+    const a = Math.random() * Math.PI * 2, y = 0.08 + Math.random() * 0.92, r = Math.sqrt(1 - y * y);
+    sp.push(Math.cos(a) * r * 40000, y * 40000, Math.sin(a) * r * 40000);
+  }
+  stars.geometry.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+}
+nightSky.visible = stars.visible = false;
+nightSky.frustumCulled = stars.frustumCulled = false;
+scene.add(nightSky, stars);
+const moonDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(38), THREE.MathUtils.degToRad(120));
+let lightDir = sunDir;
 
 // --- world -----------------------------------------------------------------
 setProgress(0.05, 'Loading Ring Road…');
@@ -101,6 +144,60 @@ const audio = new EngineAudio();
 const traffic = new Traffic(track, scene, world.signals);
 hud.traffic = traffic;
 
+// --- night mode: the three nearest street lamps light the car, plus headlights
+const lampLights = [0, 1, 2].map(() => {
+  const l = new THREE.PointLight(0xffc37a, 0, 70, 2);
+  scene.add(l);
+  return l;
+});
+const headlight = new THREE.SpotLight(0xfff1d6, 0, 160, 0.5, 0.8, 1.7);
+headlight.position.set(0, 0.7, 2.4);
+headlight.target.position.set(0, 0.2, 40);
+carGroup.add(headlight, headlight.target);
+const carGlows = [[0.42, 0.42, 2.72, 0xfff1d6, 0.9], [-0.42, 0.42, 2.72, 0xfff1d6, 0.9], [0, 0.62, -2.62, 0xff2a1a, 0.8]].map(([x, y, z, color, size]) => {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: world.glowTex, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  sp.position.set(x, y, z);
+  sp.scale.setScalar(size);
+  sp.visible = false;
+  carGroup.add(sp);
+  return sp;
+});
+let night = false;
+function setNight(on) {
+  night = on;
+  sky.visible = !on;
+  nightSky.visible = stars.visible = on;
+  scene.environment = on ? env.night : env.day;
+  scene.environmentIntensity = on ? 0.5 : 0.7;
+  scene.fog.color.setHex(on ? 0x10131c : 0xcdbfa8);
+  scene.fog.density = on ? 0.00036 : 0.00028;
+  lightDir = on ? moonDir : sunDir;
+  sun.color.setHex(on ? 0x8fa6d6 : 0xffd6a6);
+  sun.intensity = on ? 0.3 : 4.2;
+  hemi.color.setHex(on ? 0x2b3a58 : 0xc4d6ff);
+  hemi.groundColor.setHex(on ? 0x17130f : 0x6a5a40);
+  hemi.intensity = on ? 0.22 : 0.75;
+  renderer.toneMappingExposure = on ? 1.0 : 0.7;
+  for (const l of lampLights) l.intensity = on ? 170 : 0;
+  headlight.intensity = on ? 520 : 0;
+  for (const g of carGlows) g.visible = on;
+  world.setNight(on);
+  traffic.setNight(on, world.glowTex);
+  $('night').textContent = on ? 'Night' : 'Day';
+  try { localStorage.setItem('rr-night', on ? '1' : '0'); } catch { /* private mode */ }
+}
+// lamps are stored in order along the road, so the nearest ones are found by arc length
+function placeLampLights(s) {
+  const L = world.lamps, n = L.length;
+  if (!n) return;
+  let lo = 0, hi = n - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (L[mid].s < s) lo = mid + 1; else hi = mid; }
+  lampLights.forEach((light, k) => {
+    const l = L[(lo - 1 + k + n) % n];
+    light.position.set(l.x, l.y + 9.4, l.z);
+  });
+}
+
 // --- input -----------------------------------------------------------------
 const input = { up: false, down: false, left: false, right: false };
 const keymap = {
@@ -122,6 +219,7 @@ window.addEventListener('keydown', (e) => {
   const k = keymap[e.code];
   if (k) { input[k] = true; e.preventDefault(); }
   if (e.code === 'KeyC' || e.code === 'KeyV') camMode = camMode === 'chase' ? 'cockpit' : 'chase';
+  if (e.code === 'KeyN') setNight(!night);
   if (e.code === 'KeyM') { audio.setMuted(!audio.muted); $('mute').textContent = audio.muted ? 'Muted' : 'Sound'; }
 });
 window.addEventListener('keyup', (e) => {
@@ -300,8 +398,10 @@ function frame() {
     }
   }
 
+  if (night) placeLampLights(physics.s);
+
   // shadows follow the car
-  sun.position.copy(carPos).addScaledVector(sunDir, 400);
+  sun.position.copy(carPos).addScaledVector(lightDir, 400);
   sun.target.position.copy(carPos);
 
   // distance-cull scenery chunks
@@ -319,6 +419,7 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
+try { if (localStorage.getItem('rr-night') === '1') setNight(true); } catch { /* private mode */ }
 setProgress(1, 'Ready');
 $('loader').classList.add('hidden');
 $('intro').classList.remove('hidden');

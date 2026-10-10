@@ -56,7 +56,7 @@
     @keyframes blink { 50% { opacity: 0.25; } }
 
     /* location card, after the broadcast driver tag */
-    #tag { position: fixed; left: 18px; bottom: 18px; width: 280px; border-radius: 6px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+    #tag { position: fixed; left: 18px; bottom: 18px; width: 320px; border-radius: 6px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
     .tag-top { display: flex; align-items: stretch; height: 30px; background: #f4f6f8; color: #0b0f14; }
     .tag-lap { width: 34px; display: grid; place-items: center; font-weight: 900; font-size: 15px; background: #fff; }
     .tag-stripe { width: 5px; background: linear-gradient(#1e3cff 0 50%, #e4002b 50% 100%); }
@@ -70,7 +70,7 @@
     #next-uturn { color: var(--accent); font-weight: 700; margin-top: 2px; }
     #next-uturn.here { color: #111; background: var(--accent); border-radius: 3px; padding: 0 5px; display: inline-block; }
     .tag-foot { display: flex; gap: 6px; align-items: center; padding: 5px 12px 8px; background: rgba(6,12,20,0.86); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
-    #road-section { color: var(--cyan); font-weight: 700; margin-right: auto; }
+    #road-section { color: var(--cyan); font-weight: 700; margin-right: auto; white-space: nowrap; }
     .chip { padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); font-size: 9.5px; letter-spacing: 1px; }
 
     #map-col { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
@@ -115,7 +115,7 @@
 
     @media (max-width: 1100px) {
       #gauge { width: 420px; }
-        #tag { width: 240px; }
+        #tag { width: 290px; }
       #map-wrap { width: 140px; height: 140px; }
       #overview { display: none; }
     }
@@ -145,7 +145,7 @@
         <div><div class="tag-big"><span id="odo">0.0</span><small>KM</small></div><div class="tag-small" id="crashes">Driven</div></div>
         <div class="tag-r"><div class="tag-mid" id="next-dist">–</div><div class="tag-small" id="next-name">Next junction</div><div class="tag-small" id="next-uturn"></div></div>
       </div>
-      <div class="tag-foot"><span id="road-section">Ring Road</span><span class="chip" id="direction">CW</span><span class="chip" id="cam-mode">Chase</span><span class="chip" id="mute">Sound</span></div>
+      <div class="tag-foot"><span id="road-section">Ring Road</span><span class="chip" id="direction">CW</span><span class="chip" id="cam-mode">Chase</span><span class="chip" id="night">Day</span><span class="chip" id="mute">Sound</span></div>
     </div>
     <div id="gauge"></div>
     <div id="map-col">
@@ -160,7 +160,7 @@
   <div id="keys">
     <kbd>W</kbd> <kbd>↑</kbd> throttle &nbsp; <kbd>S</kbd> <kbd>↓</kbd> brake / reverse<br />
     <kbd>A</kbd> <kbd>D</kbd> <kbd>←</kbd> <kbd>→</kbd> steer<br />
-    <kbd>C</kbd> camera &nbsp; <kbd>M</kbd> mute<br />
+    <kbd>C</kbd> camera &nbsp; <kbd>N</kbd> night &nbsp; <kbd>M</kbd> mute<br />
     U-turn where the <b>U-TURN</b> pill lights
   </div>
 

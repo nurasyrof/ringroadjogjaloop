@@ -350,3 +350,40 @@ export function hazardBands(renderer) {
   }
   return finish(c, renderer, { repeat: false });
 }
+
+// Soft round glow: white core fading to transparent. Used for lamp halos and light pools.
+export function glow(renderer, core = 0.12) {
+  const [c, ctx] = canvas(128, 128);
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(core, 'rgba(255,255,255,0.75)');
+  g.addColorStop(0.45, 'rgba(255,255,255,0.22)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  return finish(c, renderer, { repeat: false });
+}
+
+// Emissive companion to facade(): which windows are lit at night (same 256x320 layout).
+export function facadeLights(renderer) {
+  const [c, ctx] = canvas(256, 320);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, 256, 320);
+  const lit = (x, y, w, h, color) => {
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, color);
+    g.addColorStop(1, 'rgba(0,0,0,0.5)');
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+  };
+  lit(26, 55, 92, 70, '#ffd9a0');          // upper-left window: warm room light
+  lit(138, 55, 92, 70, '#2a2620');         // upper-right: dark, curtains drawn
+  lit(136, 190, 108, 130, '#cfe6ff');      // shopfront: cool fluorescent
+  ctx.fillStyle = '#000';
+  ctx.fillRect(26 + 44, 55, 4, 70);
+  ctx.fillRect(26, 88, 92, 3);
+  ctx.fillRect(188, 190, 4, 130);
+  return finish(c, renderer);
+}

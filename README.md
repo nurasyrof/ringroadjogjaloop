@@ -22,6 +22,7 @@ Then open http://localhost:5180. Click or press any key to start the engine; bro
 | S / ↓ | Brake; hold at a standstill to reverse |
 | A D / ← → | Steer |
 | C | Toggle chase cam / cockpit cam (above the driver's head) |
+| N | Toggle night mode (remembered between visits) |
 | M | Mute |
 
 The central median has openings where the real road has them: dedicated U-turn spots (*putar balik*) and junction crossovers, taken from OpenStreetMap. Slow down, move to the outer lane and steer right to U-turn onto the other carriageway; the U-TURN pill in the speed dial lights when an opening is beside you. Each direction has its own signs and traffic lights. There are no openings on flyovers or in the underpass.
@@ -35,6 +36,7 @@ The central median has openings where the real road has them: dedicated U-turn s
 - Traffic lights stand where OSM has `traffic_signals` nodes, grouped into junctions on a 48 s cycle: Ring Road green, amber, then red while the crossing streets go.
 - `src/car.js` loads the glTF, re-orients it, and splits the merged wheel meshes into four spinning wheels plus steering fronts. The physics runs in track coordinates (distance along the road, lateral offset, heading). Kerbs and walls are soft at low impact: if your speed *into* the wall (speed × sine of your angle to it) is under 50 km/h you scrape along it with sparks. Above that it's a crash: the car bounces off and loses most of its speed, with a crunch, camera shake, sparks, debris and a red flash, and the location card counts your crashes. The end of a median opening counts as a wall too. Tune the threshold with `CRASH_KMH` in `src/car.js`. The 8-speed gearbox shifts automatically.
 - `src/traffic.js` runs ambient traffic in a window around you: MPVs, hatchbacks, buses, box trucks and motorbikes in both directions, with most bikes in the slow lanes. Vehicles follow the one ahead, change lanes when stuck, brake for you, stop at red lights (the signals cycle; you can run them), and some U-turn through the median openings after waiting for a gap. Touching one faster than 25 km/h closing speed is a crash (`VEHICLE_CRASH_KMH`); slower contact just nudges or scrapes. Density is the `FLEET` table.
+- Night mode swaps the sky for a dark dome with stars and a horizon glow, drops the sun to moonlight, and switches on the lights: glowing lamp heads with halos and additive pools of sodium light on the road, building windows and signs, head- and tail-lights with beam pools on all traffic, and a headlight beam and rear light on your car. The three street lamps nearest the car are real point lights, so its bodywork picks up the light as you pass under them.
 - `src/audio.js` synthesises a V6 hybrid with Web Audio: rpm-pitched oscillators, combustion pulse modulation, a load-dependent filter and distortion, MGU-K whine, wind and road noise, shift clicks, and overrun crackle.
 - `src/hud.js` draws the bottom HUD: a heading-up minimap with a whole-loop inset, speed, gear, rev lights and the current street.
 
