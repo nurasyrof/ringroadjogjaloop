@@ -298,13 +298,7 @@ export class CarPhysics {
     this.crashCooldown = Math.max(0, this.crashCooldown - dt);
     this.crashTimer = Math.max(0, this.crashTimer - dt);
     const crashSpeed = CRASH_KMH / 3.6;
-    const crashed = (kmh, wall) => {
-      this.crashCount++;
-      this.crashCooldown = 0.5;
-      this.crashTimer = 0.6;
-      this.lastCrash = { kmh, wall, s: this.s, d: this.d };
-      this.scrape = 1;
-    };
+    const crashed = (kmh, wall) => this.registerCrash(kmh, wall);
     // side wall: mirror the heading off the wall (damped) and lose speed with the angle
     const bounceSide = (kmh, wall) => {
       const c = Math.cos(this.psi);
@@ -351,6 +345,15 @@ export class CarPhysics {
     if (this.d < lo) { this.d = lo; if (lateral < 0) sideWall(-1); }
     while (this.psi > Math.PI) this.psi -= Math.PI * 2;
     while (this.psi < -Math.PI) this.psi += Math.PI * 2;
+  }
+
+  // Counts an impact (walls here, vehicles from traffic.js). wall: +1 left, -1 right, 0 nose.
+  registerCrash(kmh, wall) {
+    this.crashCount++;
+    this.crashCooldown = 0.5;
+    this.crashTimer = 0.6;
+    this.lastCrash = { kmh, wall, s: this.s, d: this.d };
+    this.scrape = 1;
   }
 
   // world position + yaw for rendering

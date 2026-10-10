@@ -1027,13 +1027,11 @@ export function buildWorld(track, renderer, scene, buildings = null) {
 
   }
 
-  // --- traffic signals at their OSM positions. Ring road traffic always gets green
-  // (it's a chill drive); signals facing the crossing streets show red.
+  // --- traffic signals at their OSM positions, grouped into junctions that cycle:
+  // ring road green -> amber -> red while the crossing streets get their turn.
   const signalHeadMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.5 });
-  const lampOff = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.3 });
-  const lampGreen = new THREE.MeshBasicMaterial({ color: 0x5dff8a });
-  const lampRed = new THREE.MeshBasicMaterial({ color: 0xff4636 });
-  const signal = (x, z, yaw, green, arm = 5) => {
+  const LAMP = { r: 0xff4636, a: 0xffb52e, g: 0x5dff8a, off: 0x242424 };
+  const signal = (x, z, yaw, lamps, arm = 5) => {
     const tl = new THREE.Group();
     tl.position.set(x, 0, z);
     tl.rotation.y = yaw;
@@ -1045,7 +1043,7 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.2, 0.36), signalHeadMat);
     head.position.set(hx, 5.3, 0);
     // lamps top to bottom: red, amber, green; they face -z (towards approaching traffic)
-    [[5.65, green ? lampOff : lampRed], [5.3, lampOff], [4.95, green ? lampGreen : lampOff]].forEach(([y, m]) => {
+    [[5.65, lamps.r], [5.3, lamps.a], [4.95, lamps.g]].forEach(([y, m]) => {
       const l = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), m);
       l.position.set(hx, y, -0.19);
       l.rotation.y = Math.PI;
@@ -1055,22 +1053,59 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     tl.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     group.add(tl);
   };
-  for (const [idx, d, sx, sz] of track.data.signals || []) {
-    const f = track.featAt[idx] >= 0 ? track.features[track.featAt[idx]] : null;
-    if (f && Math.abs(d) < GRADE.edge + 1) continue; // over a trench or under a deck
-    track.sample(idx * track.step, fr);
-    const dir = d >= 0 ? 1 : -1;
-    if (Math.abs(d) <= 14) {
-      // stop line on a ring carriageway: pole on that carriageway's kerb, arm over the lanes
-      const pd = dir * (XS.mainOuter + 0.8);
-      signal(fr.x + fr.nx * pd, fr.z + fr.nz * pd, Math.atan2(fr.tx * dir, fr.tz * dir), true);
-    } else {
-      // crossing-street approach: traffic heads towards the ring, the head faces it
-      const ax = -fr.nx * dir, az = -fr.nz * dir;
-      const ox = fr.tx * 5 * dir, oz = fr.tz * 5 * dir; // step to the street's kerb
-      signal(sx + ox, sz + oz, Math.atan2(ax, az), false, 4);
+  const CYCLE = 48; // seconds: ring green 0-30, amber 30-33, red 33-48 (cross green 34-44, amber 44-47)
+  const junctions = [];
+  const sorted = (track.data.signals || []).slice().sort((p, q) => p[0] - q[0]);
+  for (const sg of sorted) {
+    const last = junctions.at(-1);
+    if (last && sg[0] - last.idxMax <= 40) { last.list.push(sg); last.idxMax = sg[0]; }
+    else junctions.push({ list: [sg], idxMax: sg[0] });
+  }
+  for (const j of junctions) {
+    const lampSet = () => ({ r: new THREE.MeshBasicMaterial({ color: LAMP.off }), a: new THREE.MeshBasicMaterial({ color: LAMP.off }), g: new THREE.MeshBasicMaterial({ color: LAMP.off }) });
+    j.ring = lampSet();
+    j.cross = lampSet();
+    j.offset = (j.list[0][0] * 7.3) % CYCLE;
+    j.stop = { 1: null, '-1': null }; // stop-line s per travel direction
+    j.s = j.list[0][0] * track.step;
+    for (const [idx, d, sx, sz] of j.list) {
+      const f = track.featAt[idx] >= 0 ? track.features[track.featAt[idx]] : null;
+      if (f && Math.abs(d) < GRADE.edge + 1) continue; // over a trench or under a deck
+      track.sample(idx * track.step, fr);
+      const dir = d >= 0 ? 1 : -1;
+      if (Math.abs(d) <= 14) {
+        // stop line on a ring carriageway: pole on that carriageway's kerb, arm over the lanes
+        const pd = dir * (XS.mainOuter + 0.8);
+        signal(fr.x + fr.nx * pd, fr.z + fr.nz * pd, Math.atan2(fr.tx * dir, fr.tz * dir), j.ring);
+        const s = idx * track.step, cur = j.stop[dir];
+        if (cur === null || (dir > 0 ? s < cur : s > cur)) j.stop[dir] = s;
+      } else {
+        // crossing-street approach: traffic heads towards the ring, the head faces it
+        const ax = -fr.nx * dir, az = -fr.nz * dir;
+        const ox = fr.tx * 5 * dir, oz = fr.tz * 5 * dir; // step to the street's kerb
+        signal(sx + ox, sz + oz, Math.atan2(ax, az), j.cross, 4);
+      }
     }
   }
+  const ringPhase = (j, time) => {
+    const u = (time + j.offset) % CYCLE;
+    return u < 30 ? 'g' : u < 33 ? 'a' : 'r';
+  };
+  const signals = {
+    junctions,
+    ringPhase,
+    update(time) {
+      for (const j of junctions) {
+        const u = (time + j.offset) % CYCLE;
+        const ring = ringPhase(j, time);
+        const cross = u >= 34 && u < 44 ? 'g' : u >= 44 && u < 47 ? 'a' : 'r';
+        for (const k of ['r', 'a', 'g']) {
+          j.ring[k].color.setHex(ring === k ? LAMP[k] : LAMP.off);
+          j.cross[k].color.setHex(cross === k ? LAMP[k] : LAMP.off);
+        }
+      }
+    },
+  };
 
   // --- Merapi and Merbabu on the northern horizon
   const mountain = (x, z, radius, height, seed, color) => {
@@ -1096,5 +1131,5 @@ export function buildWorld(track, renderer, scene, buildings = null) {
   group.add(mountain(9000, -32000, 15000, 2900, 3, 0x6f7f92));
   group.add(mountain(6500, -43000, 14000, 3100, 7, 0x7e8ea2));
 
-  return { group, chunks };
+  return { group, chunks, signals };
 }

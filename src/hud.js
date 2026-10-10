@@ -271,6 +271,19 @@ export class Hud {
       }
     };
     dot(this.signalPts, 2.6, '#ff5a4a', 'rgba(0,0,0,0.6)');
+    if (this.traffic) {
+      // other vehicles as small white ticks
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      const f = this._tf || (this._tf = {});
+      for (const v of this.traffic.vehicles) {
+        this.track.sample(v.s, f);
+        const x = f.x + f.nx * v.d, z = f.z + f.nz * v.d;
+        if (Math.abs(x - pos.x) > span * 1.6 || Math.abs(z - pos.z) > span * 1.6) continue;
+        ctx.beginPath();
+        ctx.arc(x, z, (v.type === 'bike' ? 1.3 : 2.2) * dpr / scale, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     dot(this.uturnPts, 4.2, '#ffc440', 'rgba(0,0,0,0.7)');
     ctx.restore();
 

@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ring Road Loop</title>
+  <meta name="author" content="nurasyrof" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700;900&display=swap" rel="stylesheet" />
@@ -94,6 +95,8 @@
     kbd { font-family: inherit; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.25); background: rgba(0,0,0,0.25); color: var(--text); }
     #credits { position: fixed; left: 14px; top: 14px; font-size: 10.5px; color: rgba(255,255,255,0.7); max-width: 330px; line-height: 1.45; padding: 6px 10px; border-radius: 10px; background: rgba(12,15,19,0.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
     #credits a { color: inherit; }
+    #credits .by { font-size: 12.5px; font-weight: 700; color: #fff; margin-bottom: 2px; }
+    #credits .by a { color: var(--accent); text-decoration: none; }
 
     /* loader + intro */
     .overlay { position: fixed; inset: 0; display: grid; place-items: center; transition: opacity 600ms ease; }
@@ -162,9 +165,10 @@
   </div>
 
   <div id="credits">
+    <div class="by">Made by <a href="https://nurasyrof.com" target="_blank" rel="noopener">@nurasyrof</a></div>
     Car: <a href="https://sketchfab.com/3d-models/2026-redbull-rb22-0a3d24a58e0549d591a5a48c22eec383" target="_blank" rel="noopener">“2026 Redbull RB22”</a>
     by <a href="https://sketchfab.com/Tyler_Dave" target="_blank" rel="noopener">Dave Love SketchFab</a>, CC-BY-4.0.
-    Road data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>.
+    Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>.
   </div>
 
   <div id="intro" class="overlay hidden">

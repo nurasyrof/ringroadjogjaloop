@@ -165,6 +165,32 @@ export class EngineAudio {
     src.stop(t + dur + 0.02);
   }
 
+  // a short two-tone car horn from somewhere nearby
+  honk() {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const g = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2200;
+    g.gain.setValueAtTime(0, t);
+    for (const [on, off] of [[0, 0.18], [0.26, 0.62]]) {
+      g.gain.setValueAtTime(0.0001, t + on);
+      g.gain.linearRampToValueAtTime(0.11, t + on + 0.02);
+      g.gain.setValueAtTime(0.11, t + off - 0.03);
+      g.gain.linearRampToValueAtTime(0.0001, t + off);
+    }
+    for (const f of [415, 520]) {
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f;
+      o.connect(lp);
+      o.start(t);
+      o.stop(t + 0.7);
+    }
+    lp.connect(g).connect(this.master);
+  }
+
   // impact: low thump, crunch of carbon, and a metallic ring, scaled by impact speed
   crash(kmh) {
     if (!this.ctx || this.ctx.state !== 'running') return;

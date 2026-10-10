@@ -4,6 +4,7 @@ import { Track, buildWorld } from './track.js';
 import { loadCarModel, CarPhysics } from './car.js';
 import { EngineAudio } from './audio.js';
 import { Hud } from './hud.js';
+import { Traffic } from './traffic.js';
 import { blobShadow } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
@@ -97,6 +98,8 @@ const physics = new CarPhysics(track, car.info);
 const hud = new Hud(track);
 hud.resize();
 const audio = new EngineAudio();
+const traffic = new Traffic(track, scene, world.signals);
+hud.traffic = traffic;
 
 // --- input -----------------------------------------------------------------
 const input = { up: false, down: false, left: false, right: false };
@@ -128,15 +131,19 @@ window.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => { for (const k in input) input[k] = false; });
 window.addEventListener('pointerdown', begin);
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  // in chase view, frame the car a little higher so the bottom gauge doesn't cover it
-  if (camMode === 'chase') camera.setViewOffset(innerWidth, innerHeight, 0, innerHeight * 0.1, innerWidth, innerHeight);
-  else camera.clearViewOffset();
+// Keep the canvas matched to the window. Checked every frame as well as on resize,
+// because a tab that loads while hidden reports a 0x0 window and never fires 'resize'.
+let viewW = 0, viewH = 0;
+function fitView() {
+  if (innerWidth === viewW && innerHeight === viewH) return;
+  viewW = innerWidth; viewH = innerHeight;
+  if (!viewW || !viewH) return;
+  camera.aspect = viewW / viewH;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(viewW, viewH);
   hud.resize();
-});
+}
+window.addEventListener('resize', fitView);
 
 // --- loop ------------------------------------------------------------------
 // --- crash sparks and carbon debris
@@ -194,11 +201,17 @@ let elapsed = 0;
 const cockpitEye = new THREE.Vector3(0, car.info.cockpit.y + 0.52, car.info.cockpit.z - 0.62);
 
 function frame() {
+  fitView();
   const dt = Math.min(0.05, clock.getDelta());
   elapsed += dt;
   const steps = 4;
   let touching = 0;
   for (let i = 0; i < steps; i++) { physics.update(dt / steps, input); touching ||= physics.contactWall; }
+  // traffic moves, obeys the signals, and may bump into (or be hit by) the player
+  world.signals.update(elapsed);
+  traffic.update(dt, elapsed, physics);
+  touching ||= traffic.touching;
+  if (traffic.honkNow) { traffic.honkNow = false; audio.honk(); }
 
   const yaw = physics.pose(carPos);
   carGroup.position.copy(carPos);
@@ -247,6 +260,9 @@ function frame() {
     camera.lookAt(tmp);
     camera.fov = 70 + Math.min(1, spd / 90) * 8;
   }
+  // in chase view, frame the car a little higher so the bottom gauge doesn't cover it
+  if (camMode === 'chase') camera.setViewOffset(innerWidth, innerHeight, 0, innerHeight * 0.14, innerWidth, innerHeight);
+  else camera.clearViewOffset();
   camera.updateProjectionMatrix();
 
   // crashes and scrapes: sparks at the contact point, debris, shake, flash, crunch
@@ -307,4 +323,4 @@ setProgress(1, 'Ready');
 $('loader').classList.add('hidden');
 $('intro').classList.remove('hidden');
 requestAnimationFrame(frame);
-window.__rr = { physics, camera, car, track, renderer, audio, input, THREE };
+window.__rr = { physics, camera, car, track, renderer, audio, input, THREE, traffic, world };
