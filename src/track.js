@@ -348,7 +348,7 @@ function rngFrom(seed) {
   };
 }
 
-// Box with UVs in world metres per face so facade textures tile at true scale.
+// Box sitting on the ground (y = 0 at its base). UVs are in metres per face, unused by clay.
 function buildingBox(w, h, d, texW, texH) {
   const g = new THREE.BoxGeometry(w, h, d);
   g.translate(0, h / 2, 0);
@@ -412,41 +412,20 @@ function lampGeometry() {
 
 // ---------------------------------------------------------------------------
 
-// Extrudes OSM footprints into chunked meshes: facade walls (vertex-coloured),
-// flat concrete roofs, and hipped tile roofs for houses and small shops.
-const WALLS = [
-  ['#efe9dc', '#f2e6c9', '#e9d9c8', '#f5f1ea', '#f0dcc0', '#e4e0d0', '#f3e3d6', '#dfe8e4', '#e8e1cf', '#f1e4cc'], // house
-  ['#f5f1ea', '#d8e2ec', '#e9e4d8', '#f2d7b5', '#cfd8c4', '#e3e8ee', '#f0e0c8', '#fbfaf6', '#e6d3d3'],            // shop
-  ['#c9c9c4', '#b8bcc0', '#d4d0c6', '#aeb4b8', '#c4beb2'],                                                        // industrial
-  ['#f2efe6', '#e6ead8', '#efe4cf', '#e2e6ea'],                                                                   // public
-  ['#f4f1e8', '#e9efe6', '#f1ead6'],                                                                              // religious
-];
-const ROOFS = [
-  ['#b45a35', '#a44d2c', '#8e4128', '#b8633e', '#9a5034', '#7a4a3a'],
-  ['#b45a35', '#8e4128', '#6d6f73', '#b8633e'],
-  ['#8d949a', '#9aa1a6', '#7e8489'],
-  ['#a44d2c', '#8e4128', '#6d6f73'],
-  ['#2f6e4c', '#3a7d58', '#a44d2c'],
-];
-
+// Extrudes OSM footprints into one clay mesh per chunk: walls plus a flat or hipped roof.
+// No textures or per-building colours, so each chunk is a single cheap draw call.
 function buildRealBuildings(list, mat, group, chunks, occ, OC, density) {
   const CELL = 1200;
   const buckets = new Map();
   const bucket = (x, z) => {
     const key = Math.floor(x / CELL) + ',' + Math.floor(z / CELL);
     let b = buckets.get(key);
-    if (!b) buckets.set(key, (b = { wall: { p: [], u: [], c: [] }, flat: { p: [], u: [] }, roof: { p: [], u: [], c: [] }, cx: 0, cz: 0, n: 0 }));
+    if (!b) buckets.set(key, (b = { p: [], cx: 0, cz: 0, n: 0 }));
     return b;
-  };
-  const col = new THREE.Color();
-  const hash = (a, b) => {
-    let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b, 0xc2b2ae35);
-    h ^= h >>> 13;
-    return (h >>> 0) / 4294967296;
   };
 
   for (const b of list) {
-    const kind = b[0], h = b[1] / 10, roofType = b[2];
+    const h = b[1] / 10, roofType = b[2];
     const pts = [];
     for (let k = 3; k < b.length; k += 2) pts.push([b[k] / 10, b[k + 1] / 10]);
     const n = pts.length;
@@ -460,11 +439,9 @@ function buildRealBuildings(list, mat, group, chunks, occ, OC, density) {
       minx = Math.min(minx, x); maxx = Math.max(maxx, x); minz = Math.min(minz, z); maxz = Math.max(maxz, z);
     }
     cx /= n; cz /= n;
-    const r1 = hash(b[3], b[4]), r2 = hash(b[4], b[3]);
-    const wallC = col.set(WALLS[kind][(r1 * WALLS[kind].length) | 0]).toArray();
-    const roofC = col.set(ROOFS[kind][(r2 * ROOFS[kind].length) | 0]).toArray();
     const bk = bucket(cx, cz);
     bk.cx += cx; bk.cz += cz; bk.n++;
+    const P = bk.p;
 
     // occupancy for procedural scenery
     for (let a = Math.floor(minx / OC); a <= Math.floor(maxx / OC); a++)
@@ -472,73 +449,40 @@ function buildRealBuildings(list, mat, group, chunks, occ, OC, density) {
     const dk = Math.floor(cx / 100) + ',' + Math.floor(cz / 100);
     density.set(dk, (density.get(dk) || 0) + 1);
 
-    // walls
-    const W = bk.wall;
-    let along = 0;
+    // walls: (a0, a1, b1) and (a0, b1, b0) wind outward
     const y0 = -0.05;
     for (let i = 0; i < n; i++) {
       const [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % n];
-      const len = Math.hypot(bx - ax, bz - az);
-      const u0 = along / 6, u1 = (along + len) / 6, v1 = h / 7;
-      // (a0, a1, b1) and (a0, b1, b0) wind outward
-      W.p.push(ax, y0, az, ax, h, az, bx, h, bz, ax, y0, az, bx, h, bz, bx, y0, bz);
-      W.u.push(u0, 0, u0, v1, u1, v1, u0, 0, u1, v1, u1, 0);
-      for (let k = 0; k < 6; k++) W.c.push(...wallC);
-      along += len;
+      P.push(ax, y0, az, ax, h, az, bx, h, bz, ax, y0, az, bx, h, bz, bx, y0, bz);
     }
 
     if (roofType === 1) {
       // hipped roof approximated as a pyramid over the footprint, with a small eave overhang
-      const area = Math.abs(A) / 2;
-      const rh = Math.min(3.4, 0.6 + 0.2 * Math.sqrt(area));
-      const R = bk.roof;
+      const rh = Math.min(3.4, 0.6 + 0.2 * Math.sqrt(Math.abs(A) / 2));
       const e = (p) => [cx + (p[0] - cx) * 1.06, cz + (p[1] - cz) * 1.06];
       for (let i = 0; i < n; i++) {
         const p = e(pts[i]), q = e(pts[(i + 1) % n]);
-        // (p, apex, q) faces up and out for positive-area winding
-        R.p.push(p[0], h, p[1], cx, h + rh, cz, q[0], h, q[1]);
-        R.u.push(p[0] / 2, p[1] / 2, cx / 2, cz / 2, q[0] / 2, q[1] / 2);
-        for (let k = 0; k < 3; k++) R.c.push(...roofC);
+        P.push(p[0], h, p[1], cx, h + rh, cz, q[0], h, q[1]); // faces up and out
       }
     } else {
-      const F = bk.flat;
-      const contour = pts.map(([x, z]) => new THREE.Vector2(x, z));
-      const tris = THREE.ShapeUtils.triangulateShape(contour, []);
+      const tris = THREE.ShapeUtils.triangulateShape(pts.map(([x, z]) => new THREE.Vector2(x, z)), []);
       for (const [i0, i1, i2] of tris) {
         const a = pts[i0], b2 = pts[i1], c = pts[i2];
-        // keep the normal pointing up
-        const up = (b2[0] - a[0]) * (c[1] - a[1]) - (b2[1] - a[1]) * (c[0] - a[0]) < 0;
-        const tri = up ? [a, b2, c] : [a, c, b2];
-        for (const [x, z] of tri) { F.p.push(x, h, z); F.u.push(x / 4, z / 4); }
+        const up = (b2[0] - a[0]) * (c[1] - a[1]) - (b2[1] - a[1]) * (c[0] - a[0]) < 0; // keep the normal pointing up
+        for (const [x, z] of up ? [a, b2, c] : [a, c, b2]) P.push(x, h, z);
       }
     }
   }
 
-  const make = (data, material, colors) => {
-    if (!data.p.length) return null;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(data.p, 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(data.u, 2));
-    if (colors) g.setAttribute('color', new THREE.Float32BufferAttribute(data.c, 3));
-    g.computeVertexNormals();
-    const m = new THREE.Mesh(g, material);
-    m.castShadow = m.receiveShadow = true;
-    return m;
-  };
-  const wallMat = mat.facade.clone();
-  wallMat.vertexColors = true;
-  mat.facades.push(wallMat);
-  const roofMat = mat.roof.clone();
-  roofMat.vertexColors = true;
-  roofMat.side = THREE.DoubleSide;
   for (const bk of buckets.values()) {
-    const center = new THREE.Vector3(bk.cx / bk.n, 0, bk.cz / bk.n);
-    for (const m of [make(bk.wall, wallMat, true), make(bk.flat, mat.flatRoof, false), make(bk.roof, roofMat, true)]) {
-      if (!m) continue;
-      m.userData.center = center;
-      group.add(m);
-      chunks.push(m);
-    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(bk.p, 3));
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat.clay);
+    m.castShadow = m.receiveShadow = true;
+    m.userData.center = new THREE.Vector3(bk.cx / bk.n, 0, bk.cz / bk.n);
+    group.add(m);
+    chunks.push(m);
   }
 }
 
@@ -554,8 +498,6 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     paving: T.paving(renderer),
     concrete: T.concrete(renderer),
     curb: T.curbStripes(renderer),
-    facade: T.facade(renderer),
-    roof: T.roofTiles(renderer),
     macro: T.groundMacro(renderer),
   };
 
@@ -568,16 +510,14 @@ export function buildWorld(track, renderer, scene, buildings = null) {
     curb: new THREE.MeshStandardMaterial({ map: tex.curb, roughness: 0.8 }),
     paving: new THREE.MeshStandardMaterial({ map: tex.paving, roughness: 0.9 }),
     concrete: new THREE.MeshStandardMaterial({ map: tex.concrete, roughness: 0.9 }),
-    facade: new THREE.MeshStandardMaterial({ map: tex.facade, roughness: 0.85, emissive: 0xffe2b0, emissiveMap: T.facadeLights(renderer), emissiveIntensity: 0 }),
-    flatRoof: new THREE.MeshStandardMaterial({ map: tex.concrete, roughness: 0.95, color: 0x9a968e }),
-    roof: new THREE.MeshStandardMaterial({ map: tex.roof, roughness: 0.8 }),
+    // every building is the same matte clay: no maps, no per-building colour
+    clay: new THREE.MeshLambertMaterial({ color: 0xe4e1db }),
     trunk: new THREE.MeshStandardMaterial({ color: 0x4a3b2c, roughness: 1 }),
     leaves: new THREE.MeshStandardMaterial({ map: T.leaves(renderer), alphaTest: 0.5, alphaToCoverage: true, side: THREE.DoubleSide, roughness: 0.85 }),
     metal: new THREE.MeshStandardMaterial({ color: 0x8f969c, roughness: 0.45, metalness: 0.7 }),
     darkMetal: new THREE.MeshStandardMaterial({ color: 0x2c3035, roughness: 0.5, metalness: 0.6 }),
   };
   tex.asphalt.repeat.set(1, 1);
-  mat.facades = [mat.facade];      // every facade material, for lit windows at night
   const signMats = [];             // direction and U-turn signs brighten at night
   const lampList = [];             // median lamps: { x, y, z, nx, nz, s }
 
@@ -852,21 +792,18 @@ export function buildWorld(track, renderer, scene, buildings = null) {
   const archetypes = [
     [6, 7, 12], [6, 10.5, 14], [12, 7, 14], [8, 10.5, 16], [12, 14, 18],
   ].map(([w, h, d]) => ({ w, h, d, geo: buildingBox(w, h, d, 6, 7) }));
-  const facadeMats = [mat.facade, mat.facade, mat.flatRoof, mat.flatRoof, mat.facade, mat.facade];
-  const shops = archetypes.map((a) => new Scatter(a.geo, facadeMats));
+  const shops = archetypes.map((a) => new Scatter(a.geo, mat.clay));
   const houseGeo = buildingBox(8, 3.6, 9, 6, 7);
-  const houses = new Scatter(houseGeo, facadeMats);
+  const houses = new Scatter(houseGeo, mat.clay);
   const roofGeo = new THREE.ConeGeometry(Math.SQRT1_2, 1, 4, 1);
   roofGeo.rotateY(Math.PI / 4);
   roofGeo.translate(0, 0.5, 0);
-  const roofs = new Scatter(roofGeo, mat.roof);
+  const roofs = new Scatter(roofGeo, mat.clay);
   const treeKinds = [treeGeometry(5), treeGeometry(9)];
   const trunks = treeKinds.map((t) => new Scatter(t.trunk, mat.trunk));
   const crowns = treeKinds.map((t) => new Scatter(t.crown, mat.leaves));
   const lamps = new Scatter(lampGeometry(), mat.metal);
 
-  const wallColors = ['#efe9dc', '#f2e6c9', '#dfe8e4', '#e9d9c8', '#f5f1ea', '#d8e2ec', '#f0dcc0', '#e4e0d0', '#f3e3d6', '#cfd8c4'];
-  const roofColors = ['#b45a35', '#a44d2c', '#8e4128', '#b8633e', '#7a4a3a', '#5d5f63'];
   const leafColors = ['#c8e0b0', '#d8eac0', '#b8d4a0', '#e4f0c8', '#c0d8a8', '#f0f0c8'];
 
   const fr = {};
@@ -898,8 +835,8 @@ export function buildWorld(track, renderer, scene, buildings = null) {
         if (!real && !track.gap[idx] && !nearRoad(x, z, a.d * 0.6) && !nearRing(x, z, W + 2 + a.d / 2 - 0.5)) {
           const sy = 0.9 + rnd() * 0.25;
           const yaw2 = Math.atan2(fr.tx, fr.tz);
-          shops[archetypes.indexOf(a)].add(x, -0.05, z, yaw2, 1, sy, 1, wallColors[(rnd() * wallColors.length) | 0]);
-          if (rnd() < 0.45) roofs.add(x, a.h * sy - 0.05, z, yaw2, a.w * 1.08, 2.2 + rnd(), a.d * 1.05, roofColors[(rnd() * roofColors.length) | 0]);
+          shops[archetypes.indexOf(a)].add(x, -0.05, z, yaw2, 1, sy, 1);
+          if (rnd() < 0.45) roofs.add(x, a.h * sy - 0.05, z, yaw2, a.w * 1.08, 2.2 + rnd(), a.d * 1.05);
         }
         s += wNeed + (rnd() < 0.15 ? 4 + rnd() * 8 : 0.2);
       } else {
@@ -925,8 +862,8 @@ export function buildWorld(track, renderer, scene, buildings = null) {
       if (rnd() < 0.62 && densityAt(x, z) === 0) {
         const yaw = Math.atan2(fr.tx, fr.tz) + (rnd() < 0.7 ? 0 : Math.PI / 2) + (rnd() - 0.5) * 0.3;
         const sx = 0.8 + rnd() * 0.5, sz = 0.8 + rnd() * 0.5;
-        houses.add(x, -0.05, z, yaw, sx, 0.9 + rnd() * 0.3, sz, wallColors[(rnd() * wallColors.length) | 0]);
-        roofs.add(x, 3.6 * 1.0 - 0.1, z, yaw, 8 * sx * 1.12, 2 + rnd() * 1.2, 9 * sz * 1.12, roofColors[(rnd() * roofColors.length) | 0]);
+        houses.add(x, -0.05, z, yaw, sx, 0.9 + rnd() * 0.3, sz);
+        roofs.add(x, 3.6 * 1.0 - 0.1, z, yaw, 8 * sx * 1.12, 2 + rnd() * 1.2, 9 * sz * 1.12);
       } else {
         tree(x, z, 0.9 + rnd() * 0.8);
       }
@@ -1176,7 +1113,7 @@ export function buildWorld(track, renderer, scene, buildings = null) {
   const mountainDay = mountains.map((m) => m.material.color.getHex());
   const setNight = (on) => {
     nightGroup.visible = on;
-    for (const m of mat.facades) m.emissiveIntensity = on ? 1.25 : 0;
+    mat.clay.emissive.setHex(on ? 0x16130f : 0x000000); // keep silhouettes readable in the dark
     for (const m of signMats) m.emissiveIntensity = on ? 0.85 : 0.14;
     mountains.forEach((m, i) => m.material.color.setHex(on ? 0x0b1019 : mountainDay[i]));
   };

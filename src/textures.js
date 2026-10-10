@@ -138,70 +138,6 @@ export function curbStripes(renderer) {
   return finish(c, renderer);
 }
 
-// Ruko (shophouse) facade: one module = 6 m wide x 7 m tall (two floors).
-export function facade(renderer) {
-  const [c, ctx] = canvas(256, 320);
-  const r = rng(61);
-  ctx.fillStyle = '#e6e2da';
-  ctx.fillRect(0, 0, 256, 320);
-  speckle(ctx, 256, 320, r, 6000, ['rgba(120,110,100,0.12)', 'rgba(255,255,255,0.15)']);
-  // grime gradient near the ground
-  const g = ctx.createLinearGradient(0, 220, 0, 320);
-  g.addColorStop(0, 'rgba(70,60,50,0)');
-  g.addColorStop(1, 'rgba(70,60,50,0.25)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 220, 256, 100);
-  // upper floor windows
-  for (let i = 0; i < 2; i++) {
-    const x = 26 + i * 112;
-    ctx.fillStyle = '#5c5a55';
-    ctx.fillRect(x - 3, 52, 98, 76);
-    const wg = ctx.createLinearGradient(0, 55, 0, 125);
-    wg.addColorStop(0, '#6f8796');
-    wg.addColorStop(1, '#2b3a44');
-    ctx.fillStyle = wg;
-    ctx.fillRect(x, 55, 92, 70);
-    ctx.fillStyle = '#d9d6cf';
-    ctx.fillRect(x + 44, 55, 4, 70);
-    ctx.fillRect(x, 88, 92, 3);
-  }
-  // signage band
-  ctx.fillStyle = 'rgba(40,40,40,0.18)';
-  ctx.fillRect(0, 150, 256, 30);
-  // ground floor: rolling shutter on the left, glass shopfront on the right
-  ctx.fillStyle = '#8f9396';
-  ctx.fillRect(12, 190, 112, 130);
-  for (let y = 190; y < 320; y += 5) {
-    ctx.fillStyle = y % 10 ? '#a5a9ab' : '#7b7f82';
-    ctx.fillRect(12, y, 112, 2);
-  }
-  const sg = ctx.createLinearGradient(0, 190, 0, 320);
-  sg.addColorStop(0, '#4c5d66');
-  sg.addColorStop(1, '#1d2428');
-  ctx.fillStyle = sg;
-  ctx.fillRect(136, 190, 108, 130);
-  ctx.fillStyle = '#d0ccc4';
-  ctx.fillRect(188, 190, 4, 130);
-  return finish(c, renderer);
-}
-
-export function roofTiles(renderer) {
-  const [c, ctx] = canvas(128, 128);
-  const r = rng(71);
-  ctx.fillStyle = '#9c4a2c';
-  ctx.fillRect(0, 0, 128, 128);
-  for (let y = 0; y < 128; y += 8) {
-    ctx.fillStyle = 'rgba(40,15,5,0.35)';
-    ctx.fillRect(0, y, 128, 2);
-    for (let x = (y / 8) % 2 ? 0 : 8; x < 128; x += 16) {
-      ctx.fillStyle = 'rgba(40,15,5,0.25)';
-      ctx.fillRect(x, y, 1, 8);
-    }
-  }
-  speckle(ctx, 128, 128, r, 2500, ['rgba(255,220,180,0.12)', 'rgba(0,0,0,0.15)']);
-  return finish(c, renderer);
-}
-
 // Large-scale tint variation for the ground (fields, dry patches, villages).
 export function groundMacro(renderer) {
   const [c, ctx] = canvas(512, 512);
@@ -362,28 +298,4 @@ export function glow(renderer, core = 0.12) {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 128, 128);
   return finish(c, renderer, { repeat: false });
-}
-
-// Emissive companion to facade(): which windows are lit at night (same 256x320 layout).
-export function facadeLights(renderer) {
-  const [c, ctx] = canvas(256, 320);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, 256, 320);
-  const lit = (x, y, w, h, color) => {
-    const g = ctx.createLinearGradient(0, y, 0, y + h);
-    g.addColorStop(0, color);
-    g.addColorStop(1, 'rgba(0,0,0,0.5)');
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
-  };
-  lit(26, 55, 92, 70, '#ffd9a0');          // upper-left window: warm room light
-  lit(138, 55, 92, 70, '#2a2620');         // upper-right: dark, curtains drawn
-  lit(136, 190, 108, 130, '#cfe6ff');      // shopfront: cool fluorescent
-  ctx.fillStyle = '#000';
-  ctx.fillRect(26 + 44, 55, 4, 70);
-  ctx.fillRect(26, 88, 92, 3);
-  ctx.fillRect(188, 190, 4, 130);
-  return finish(c, renderer);
 }
