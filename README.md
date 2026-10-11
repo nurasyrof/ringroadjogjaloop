@@ -14,6 +14,8 @@ python3 tools/serve.py 5180
 
 Then open http://localhost:5180. Click or press any key to start the engine; browsers need a user gesture before they play audio.
 
+Desktop only: phones and tablets see a "please use desktop" message and the game isn't loaded for them.
+
 ## Controls
 
 | Key | Action |
